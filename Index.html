@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Éditeur PDF - Pro Master Final (Rendu Parfait)</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <style>
+        :root {
+            --bg-app: #e5e7eb; --bg-panel: rgba(255, 255, 255, 0.95);
+            --text-color: #374151; --icon-color: #4b5563;
+            --active-bg: #ede9fe; --active-icon: #7c3aed;
+            --divider: #e5e7eb; --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+
+        body { margin: 0; background: var(--bg-app); overflow: hidden; font-family: system-ui, sans-serif; user-select: none; }
+
+        /* --- BARRES FLOTTANTES --- */
+        .toolbar {
+            position: fixed; background: var(--bg-panel); backdrop-filter: blur(10px);
+            padding: 8px 12px; border-radius: 100px; box-shadow: var(--shadow);
+            border: 1px solid rgba(255, 255, 255, 0.5); display: flex; align-items: center; gap: 8px; z-index: 100;
+        }
+
+        .style-bar { border-radius: 16px; padding: 6px 16px; gap: 16px; transition: opacity 0.2s; }
+        .style-bar.hidden { opacity: 0; pointer-events: none; }
+        .style-group { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-color); font-weight: 500;}
+
+        /* Pagination Minimaliste */
+        .pagination-bar { padding: 6px 12px; transition: opacity 0.3s; }
+        .pagination-bar.hidden { opacity: 0; pointer-events: none; }
+        .page-info { font-weight: 600; color: var(--text-color); font-size: 0.9rem; margin: 0 8px; min-width: 80px; text-align: center; cursor: pointer; padding: 4px 8px; border-radius: 8px; transition: 0.2s; }
+        .page-info:hover { background: var(--active-bg); color: var(--active-icon); }
+
+        /* --- GESTIONNAIRE DE PAGES --- */
+        .page-manager {
+            position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+            background: var(--bg-panel); backdrop-filter: blur(10px); border-radius: 16px;
+            box-shadow: var(--shadow); border: 1px solid rgba(255,255,255,0.5);
+            width: 90%; max-width: 1000px; padding: 16px; z-index: 90;
+            transition: opacity 0.3s, transform 0.3s;
+        }
+        .page-manager.hidden { opacity: 0; pointer-events: none; transform: translate(-50%, 20px); }
+        .pm-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-weight: bold; color: var(--text-color); }
+        .pm-header button { background: none; border: none; cursor: pointer; font-size: 1.2rem; color: var(--icon-color); }
+        .pm-thumbnails { display: flex; gap: 16px; overflow-x: auto; padding: 12px 12px 16px 12px; align-items: center; }
+        
+        .pm-thumb-wrapper { position: relative; cursor: grab; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; transition: 0.2s; }
+        .pm-thumb-wrapper:active { cursor: grabbing; }
+        .pm-thumb-wrapper canvas { border: 2px solid transparent; border-radius: 4px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); background: white; max-height: 150px; transition: 0.2s; }
+        .pm-thumb-wrapper.drag-over canvas { border-color: var(--active-icon); transform: scale(1.05); }
+        
+        .pm-thumb-num { font-size: 0.8rem; color: var(--text-color); font-weight: bold; }
+        .pm-btn-delete { position: absolute; top: -8px; right: -8px; background: #dc2626; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        
+        .pm-btn-add { border: 2px dashed #9ca3af; border-radius: 8px; height: 150px; width: 105px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; color: #6b7280; font-weight: bold; gap: 8px; flex-shrink: 0; background: transparent; transition: 0.2s;}
+        .pm-btn-add:hover { background: #f3f4f6; color: var(--active-icon); border-color: var(--active-icon); }
+
+        .drag-handle { color: #9ca3af; cursor: grab; padding: 0 8px; font-size: 1.2rem; }
+        .tool-group { display: flex; gap: 4px; align-items: center; position: relative; }
+        .tool-btn { background: transparent; border: none; color: var(--icon-color); width: 38px; height: 38px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: 0.2s; }
+        .tool-btn:hover:not(:disabled) { background: #f3f4f6; } .tool-btn.active { background: var(--active-bg); color: var(--active-icon); } .tool-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .divider-v { width: 1px; height: 24px; background: var(--divider); margin: 0 4px; }
+        select, input[type="number"] { border: 1px solid var(--divider); border-radius: 8px; padding: 4px 8px; font-size: 0.85rem; outline: none; background: white;}
+        input[type="number"] { width: 45px; text-align: center; } input[type="color"] { border: none; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; padding: 0; background: none; } input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; } input[type="color"]::-webkit-color-swatch { border: none; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.1); } input[type="range"] { width: 80px; accent-color: var(--active-icon); }
+        .btn-export { background: var(--active-bg); color: var(--active-icon); border: none; padding: 8px 16px; border-radius: 50px; font-weight: 600; cursor: pointer; display: flex; gap: 8px; }
+        .dropdown { position: absolute; top: 50px; right: 0; background: white; border-radius: 12px; box-shadow: var(--shadow); padding: 8px; display: none; flex-direction: column; gap: 4px; min-width: 200px; } .dropdown button { text-align: left; padding: 8px 12px; border: none; background: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 8px; color: var(--text-color); } .dropdown button:hover { background: #f3f4f6; } .dropdown button.danger { color: #dc2626; margin-top: 8px; border-top: 1px solid #f3f4f6; border-radius: 0 0 6px 6px; }
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 200; } .modal { background: white; padding: 24px; border-radius: 16px; width: 400px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); text-align: center; max-height: 80vh; overflow-y: auto; } .modal h3 { margin-top: 0; } .modal-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; } .btn-cancel { padding: 8px 16px; border: 1px solid #ccc; border-radius: 8px; background: white; cursor: pointer; } .btn-confirm { padding: 8px 16px; border: none; border-radius: 8px; background: var(--active-icon); color: white; cursor: pointer; }
+        #sig-canvas { border: 2px dashed #ccc; border-radius: 8px; cursor: crosshair; background: #fafafa; margin: 10px 0; } .sig-item { position: relative; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; cursor: pointer; transition: 0.2s; background: #f9fafb; } .sig-item:hover { border-color: var(--active-icon); background: #f3f4f6; } .sig-item img { max-height: 60px; pointer-events: none; } .btn-delete-sig { position: absolute; top: -8px; right: -8px; background: #dc2626; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; display: flex; justify-content: center; align-items: center; }
+        
+        body.drag-over::after { content: "Glissez votre fichier ici"; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(124, 58, 237, 0.1); border: 4px dashed var(--active-icon); z-index: 1000; display: flex; justify-content: center; align-items: center; font-size: 2rem; color: var(--active-icon); font-weight: bold; pointer-events: none; }
+        #loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 9999; display: none; justify-content: center; align-items: center; font-size: 1.5rem; color: var(--active-icon); font-weight: bold; flex-direction: column; gap: 10px; }
+    </style>
+</head>
+<body>
+
+    <canvas id="pdf-editor"></canvas>
+
+    <div id="loading-overlay">
+        <i class="ph ph-spinner-gap ph-spin" style="font-size: 3rem;"></i>
+        <span id="loading-text">Opération en cours...</span>
+    </div>
+
+    <div id="main-toolbar" class="toolbar">
+        <div id="drag-handle-main" class="drag-handle"><i class="ph ph-dots-six-vertical"></i></div>
+        <div class="tool-group">
+            <button class="tool-btn" id="btn-undo" onclick="undo()" disabled><i class="ph ph-arrow-u-up-left"></i></button>
+            <button class="tool-btn" id="btn-redo" onclick="redo()" disabled><i class="ph ph-arrow-u-up-right"></i></button>
+        </div>
+        <div class="divider-v"></div>
+        <div class="tool-group">
+            <button class="tool-btn active" data-tool="select" title="Sélection (V)"><i class="ph ph-cursor"></i></button>
+            <button class="tool-btn" data-tool="draw" title="Dessin"><i class="ph ph-pencil-simple"></i></button>
+            <button class="tool-btn" data-tool="highlight" title="Surligneur"><i class="ph ph-highlighter"></i></button>
+            <button class="tool-btn" data-tool="text" title="Texte"><i class="ph ph-text-t"></i></button>
+            <button class="tool-btn" data-tool="line" title="Ligne"><i class="ph ph-line-segment"></i></button>
+            <button class="tool-btn" data-tool="arrow" title="Flèche"><i class="ph ph-arrow-up-right"></i></button>
+            <button class="tool-btn" data-tool="rect" title="Rectangle"><i class="ph ph-square"></i></button>
+            <button class="tool-btn" data-tool="circle" title="Cercle"><i class="ph ph-circle"></i></button>
+            <button class="tool-btn" data-tool="check" title="Check"><i class="ph ph-check"></i></button>
+            <button class="tool-btn" onclick="document.getElementById('image-upload').click()" title="Ajouter image"><i class="ph ph-image"></i></button>
+            <input type="file" id="image-upload" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
+            <button class="tool-btn" onclick="openSignatureManager()" title="Signature"><i class="ph ph-signature"></i></button>
+        </div>
+        <div class="divider-v"></div>
+        <button id="export-btn" class="btn-export" onclick="exportPdf()"><i class="ph ph-download-simple"></i> Exporter PDF</button>
+        <div class="tool-group">
+            <button class="tool-btn" onclick="toggleMenu()"><i class="ph ph-list"></i></button>
+            <div id="main-menu" class="dropdown">
+                <button onclick="document.getElementById('file-upload').click()"><i class="ph ph-file-pdf"></i> Ouvrir un PDF</button>
+                <input type="file" id="file-upload" accept="application/pdf" style="display:none" onchange="handleFileUpload(event)">
+                <button onclick="document.getElementById('project-upload').click()"><i class="ph ph-folder-open"></i> Ouvrir Projet (.json)</button>
+                <input type="file" id="project-upload" accept=".json" style="display:none" onchange="handleProjectUpload(event)">
+                <button onclick="saveProject()"><i class="ph ph-floppy-disk"></i> Sauvegarder Projet</button>
+                <button class="danger" onclick="openClearModal()"><i class="ph ph-trash"></i> Tout effacer (Cette page)</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="style-bar" class="toolbar style-bar hidden">
+        <div id="drag-handle-style" class="drag-handle"><i class="ph ph-dots-six-vertical"></i></div>
+        <div id="group-primary-color" class="style-group"><span id="color-label">Couleur</span><input type="color" id="primary-color" value="#1e1e1e"></div>
+        <div id="group-stroke-width" class="style-group"><i class="ph ph-line-segments"></i><input type="range" id="stroke-width" min="1" max="10" value="3"></div>
+        <div id="group-fill-color" class="style-group"><div class="divider-v"></div><span>Fond</span><input type="color" id="fill-color" value="#ffffff"><label style="display: flex; align-items: center; gap: 4px; cursor: pointer;"><input type="checkbox" id="fill-transparent" checked> Vide</label></div>
+        <div id="group-text" class="style-group"><div class="divider-v"></div><select id="font-family"><option value="Helvetica">Helvetica</option><option value="Times New Roman">Times Roman</option><option value="Courier">Courier</option></select><input type="number" id="font-size" value="16" min="8" max="72"></div>
+    </div>
+
+    <div id="pagination-bar" class="toolbar pagination-bar hidden">
+        <button class="tool-btn" id="btn-prev-page" onclick="prevPage()"><i class="ph ph-caret-left"></i></button>
+        <span class="page-info" onclick="togglePageManager()" title="Gérer les pages">Page <span id="page-num">1</span> / <span id="page-count">1</span></span>
+        <button class="tool-btn" id="btn-next-page" onclick="nextPage()"><i class="ph ph-caret-right"></i></button>
+    </div>
+
+    <div id="page-manager" class="page-manager hidden">
+        <div class="pm-header">
+            <span>Organiser les pages (Drag & Drop) - Double clic pour éditer</span>
+            <button onclick="togglePageManager()"><i class="ph ph-x"></i></button>
+        </div>
+        <div id="pm-thumbnails" class="pm-thumbnails">
+            </div>
+    </div>
+
+    <div id="clear-modal" class="modal-overlay"><div class="modal"><h3>Tout effacer ?</h3><p>Cette action supprimera toutes vos annotations sur cette page.</p><div class="modal-actions"><button class="btn-cancel" onclick="closeModals()">Annuler</button><button class="btn-confirm" onclick="clearAll()" style="background: #dc2626;">Effacer</button></div></div></div>
+    <div id="sig-list-modal" class="modal-overlay"><div class="modal"><h3>Vos Signatures</h3><div id="sig-list-container" style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; margin: 20px 0;"></div><div class="modal-actions"><button class="btn-cancel" onclick="closeModals()">Fermer</button><button class="btn-confirm" onclick="openDrawSignature()">+ Nouvelle Signature</button></div></div></div>
+    <div id="sig-draw-modal" class="modal-overlay"><div class="modal"><h3>Dessiner une Signature</h3><canvas id="sig-canvas" width="350" height="150"></canvas><div class="modal-actions"><button class="btn-cancel" onclick="openSignatureManager()">Annuler</button><button class="btn-cancel" onclick="sigCtx.clearRect(0,0,350,150)">Effacer</button><button class="btn-confirm" onclick="saveNewSignature()">Sauvegarder</button></div></div></div>
+
+    <script>
+        function hexToRgba(hex, alpha) { let r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16); return `rgba(${r}, ${g}, ${b}, ${alpha})`; }
+        function arrayBufferToBase64(buffer) { let binary = ''; const bytes = new Uint8Array(buffer); const len = bytes.byteLength; for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]); return window.btoa(binary); }
+        function base64ToArrayBuffer(base64) { const binary_string = window.atob(base64); const len = binary_string.length; const bytes = new Uint8Array(len); for (let i = 0; i < len; i++) bytes[i] = binary_string.charCodeAt(i); return bytes.buffer; }
+
+        const pdfjsLib = window['pdfjs-dist/build/pdf'];
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+        
+        const state = { tool: 'select', primaryColor: '#1e1e1e', fillColor: '#ffffff', isFillTransparent: true, strokeWidth: 3, fontSize: 16, fontFamily: 'Helvetica', lastSymbolSize: 20 };
+        const canvas = new fabric.Canvas('pdf-editor', { width: window.innerWidth, height: window.innerHeight, selection: true });
+        window.addEventListener('resize', () => { canvas.setWidth(window.innerWidth); canvas.setHeight(window.innerHeight); });
+
+        let pdfBytesOriginal = null;
+        let pdfDoc = null;
+        let currentPageNum = 1;
+        let totalPages = 1;
+        let pagesData = {};
+
+        const mainToolbar = document.getElementById('main-toolbar'); const styleBar = document.getElementById('style-bar'); const paginationBar = document.getElementById('pagination-bar');
+        mainToolbar.style.left = (window.innerWidth - mainToolbar.offsetWidth) / 2 + 'px'; mainToolbar.style.top = '20px';
+        styleBar.style.left = (window.innerWidth - 350) / 2 + 'px'; styleBar.style.top = '75px'; 
+        paginationBar.style.left = (window.innerWidth - paginationBar.offsetWidth) / 2 + 'px'; paginationBar.style.bottom = '20px';
+
+        function makeDraggable(elementId, handleId) {
+            const el = document.getElementById(elementId); const handle = document.getElementById(handleId); let isDragging = false, offsetX, offsetY;
+            handle.addEventListener('mousedown', (e) => { isDragging = true; const rect = el.getBoundingClientRect(); offsetX = e.clientX - rect.left; offsetY = e.clientY - rect.top; el.style.bottom = 'auto'; el.style.right = 'auto'; });
+            window.addEventListener('mousemove', (e) => { if (isDragging) { el.style.left = `${e.clientX - offsetX}px`; el.style.top = `${e.clientY - offsetY}px`; el.style.transform = 'none'; } });
+            window.addEventListener('mouseup', () => isDragging = false);
+        }
+        makeDraggable('main-toolbar', 'drag-handle-main'); makeDraggable('style-bar', 'drag-handle-style');
+
+        // --- MOTEUR DE BASE PDF ---
+        async function loadPDFFromBuffer(buffer, isProjectLoad = false) {
+            pdfBytesOriginal = buffer;
+            pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+            totalPages = pdfDoc.numPages;
+            if (!isProjectLoad) { pagesData = {}; currentPageNum = 1; }
+            if (currentPageNum > totalPages) currentPageNum = totalPages;
+
+            document.getElementById('page-count').innerText = totalPages;
+            if(totalPages > 0) paginationBar.classList.remove('hidden');
+            if(totalPages > 0) await renderPage(currentPageNum);
+            else canvas.clear();
+        }
+
+        async function renderPage(pageNum) {
+            const page = await pdfDoc.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 2.0 });
+            const hiddenCanvas = document.createElement('canvas'); hiddenCanvas.width = viewport.width; hiddenCanvas.height = viewport.height;
+            await page.render({ canvasContext: hiddenCanvas.getContext('2d'), viewport: viewport }).promise;
+
+            return new Promise((resolve) => {
+                fabric.Image.fromURL(hiddenCanvas.toDataURL(), (img) => {
+                    img.set({ originX: 'left', originY: 'top', left: 0, top: 0, selectable: false, evented: false });
+                    
+                    canvas.clear(); 
+                    
+                    const applyViewAndResolve = () => {
+                        canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
+                        
+                        const zoom = Math.min((window.innerWidth - 100) / viewport.width, (window.innerHeight - 100) / viewport.height);
+                        canvas.setZoom(zoom); 
+                        canvas.viewportTransform[4] = (window.innerWidth - viewport.width * zoom) / 2; 
+                        canvas.viewportTransform[5] = (window.innerHeight - viewport.height * zoom) / 2;
+                        
+                        document.getElementById('page-num').innerText = pageNum;
+                        document.getElementById('btn-prev-page').disabled = pageNum <= 1; 
+                        document.getElementById('btn-next-page').disabled = pageNum >= totalPages;
+
+                        setTool(state.tool);
+                        history = []; historyIndex = -1; saveHistory(); 
+                        resolve();
+                    };
+
+                    if (pagesData[pageNum]) { 
+                        canvas.loadFromJSON(pagesData[pageNum], applyViewAndResolve);
+                    } else { 
+                        applyViewAndResolve(); 
+                    }
+                });
+            });
+        }
+
+        function saveCurrentPageData() {
+            if (!pdfDoc) return;
+            const bg = canvas.backgroundImage; canvas.backgroundImage = null;
+            pagesData[currentPageNum] = JSON.stringify(canvas.toJSON(['selectable', 'evented', 'hoverCursor', 'lockUniScaling']));
+            canvas.backgroundImage = bg;
+        }
+
+        async function prevPage() { if (currentPageNum <= 1) return; saveCurrentPageData(); currentPageNum--; await renderPage(currentPageNum); }
+        async function nextPage() { if (currentPageNum >= totalPages) return; saveCurrentPageData(); currentPageNum++; await renderPage(currentPageNum); }
+
+        fetch('https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/web/compressed.tracemonkey-pldi-09.pdf').then(res => res.arrayBuffer()).then(loadPDFFromBuffer);
+
+
+        // --- GESTIONNAIRE DE PAGES ---
+        let isPageManagerOpen = false;
+
+        async function togglePageManager() {
+            const pm = document.getElementById('page-manager');
+            isPageManagerOpen = !isPageManagerOpen;
+            if (isPageManagerOpen) {
+                saveCurrentPageData(); 
+                pm.classList.remove('hidden');
+                await renderThumbnails();
+            } else {
+                pm.classList.add('hidden');
+            }
+        }
+
+        async function renderThumbnails() {
+            const container = document.getElementById('pm-thumbnails');
+            container.innerHTML = '<i class="ph ph-spinner-gap ph-spin"></i> Chargement des pages...';
+            
+            let html = '';
+            for (let i = 1; i <= totalPages; i++) {
+                const page = await pdfDoc.getPage(i);
+                const viewport = page.getViewport({ scale: 0.2 }); 
+                const c = document.createElement('canvas'); c.width = viewport.width; c.height = viewport.height;
+                await page.render({ canvasContext: c.getContext('2d'), viewport: viewport }).promise;
+                
+                html += `
+                    <div class="pm-thumb-wrapper" draggable="true" data-index="${i-1}" 
+                         ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" 
+                         ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)"
+                         ondblclick="goToPage(${i})">
+                        <canvas width="${c.width}" height="${c.height}" id="thumb-${i}"></canvas>
+                        <span class="pm-thumb-num">Page ${i}</span>
+                        <button class="pm-btn-delete" onclick="deletePage(${i-1})" title="Supprimer"><i class="ph ph-trash"></i></button>
+                    </div>
+                `;
+            }
+            html += `<div class="pm-btn-add" onclick="addBlankPage()"><i class="ph ph-plus-circle" style="font-size: 2rem;"></i><span style="font-size:0.8rem; text-align:center;">Page<br>Blanche</span></div>`;
+            
+            container.innerHTML = html;
+
+            for (let i = 1; i <= totalPages; i++) {
+                const page = await pdfDoc.getPage(i); const viewport = page.getViewport({ scale: 0.2 });
+                const ctx = document.getElementById(`thumb-${i}`).getContext('2d');
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+            }
+        }
+
+        async function goToPage(pageNum) {
+            if (currentPageNum !== pageNum) {
+                saveCurrentPageData();
+                currentPageNum = pageNum;
+                await renderPage(currentPageNum);
+            }
+            togglePageManager();
+        }
+
+        function handleDragStart(e) { e.dataTransfer.setData('text/plain', e.currentTarget.dataset.index); }
+        function handleDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+        function handleDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+        function handleDrop(e) {
+            e.preventDefault(); e.currentTarget.classList.remove('drag-over');
+            const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
+            const toIndex = parseInt(e.currentTarget.dataset.index);
+            if (fromIndex !== toIndex) {
+                let order = Array.from({length: totalPages}, (_, i) => i);
+                const item = order.splice(fromIndex, 1)[0];
+                order.splice(toIndex, 0, item);
+                applyPDFChanges(order);
+            }
+        }
+
+        function deletePage(index) {
+            if (totalPages <= 1) { alert("Vous ne pouvez pas supprimer la dernière page."); return; }
+            let order = Array.from({length: totalPages}, (_, i) => i);
+            order.splice(index, 1);
+            applyPDFChanges(order);
+        }
+
+        function addBlankPage() {
+            let order = Array.from({length: totalPages}, (_, i) => i);
+            order.push('blank');
+            applyPDFChanges(order);
+        }
+
+        async function applyPDFChanges(newOrderArray) {
+            document.getElementById('loading-text').innerText = "Modification de la structure...";
+            document.getElementById('loading-overlay').style.display = 'flex';
+            
+            try {
+                const doc = await PDFLib.PDFDocument.load(pdfBytesOriginal);
+                const newDoc = await PDFLib.PDFDocument.create();
+                const newPagesData = {};
+                
+                let defaultWidth = 595.28, defaultHeight = 841.89; 
+                if (doc.getPageCount() > 0) { const s = doc.getPage(0).getSize(); defaultWidth = s.width; defaultHeight = s.height; }
+
+                for (let i = 0; i < newOrderArray.length; i++) {
+                    const oldIndex = newOrderArray[i];
+                    const newPageNum = i + 1;
+                    
+                    if (oldIndex === 'blank') {
+                        newDoc.addPage([defaultWidth, defaultHeight]);
+                    } else {
+                        const [copiedPage] = await newDoc.copyPages(doc, [oldIndex]);
+                        newDoc.addPage(copiedPage);
+                        if (pagesData[oldIndex + 1]) newPagesData[newPageNum] = pagesData[oldIndex + 1];
+                    }
+                }
+                
+                pdfBytesOriginal = await newDoc.save();
+                pagesData = newPagesData;
+                
+                await loadPDFFromBuffer(pdfBytesOriginal, true);
+                await renderThumbnails();
+            } catch (err) { console.error(err); alert("Erreur lors de la réorganisation."); }
+            
+            document.getElementById('loading-overlay').style.display = 'none';
+        }
+
+        // --- I/O ET UPLOADS ---
+        function handleFileUpload(e) { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (evt) => { loadPDFFromBuffer(evt.target.result); document.getElementById('main-menu').style.display = 'none'; }; reader.readAsArrayBuffer(file); }
+        function saveProject() { saveCurrentPageData(); const projectData = { pdfBase64: arrayBufferToBase64(pdfBytesOriginal), pagesData: pagesData, currentPageNum: currentPageNum }; const blob = new Blob([JSON.stringify(projectData)], {type: "application/json"}); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'projet_editeur.json'; link.click(); document.getElementById('main-menu').style.display = 'none'; }
+        function loadProject(jsonString) { const projectData = JSON.parse(jsonString); pagesData = projectData.pagesData; currentPageNum = projectData.currentPageNum || 1; const buffer = base64ToArrayBuffer(projectData.pdfBase64); loadPDFFromBuffer(buffer, true); document.getElementById('main-menu').style.display = 'none'; }
+        function handleProjectUpload(e) { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (evt) => loadProject(evt.target.result); reader.readAsText(file); }
+        function addImageToCanvas(dataUrl) { fabric.Image.fromURL(dataUrl, (img) => { const maxDim = 300; let scale = 1; if (img.width > maxDim || img.height > maxDim) scale = Math.min(maxDim / img.width, maxDim / img.height); const center = canvas.getVpCenter(); img.set({ left: center.x, top: center.y, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale, hoverCursor: 'move' }); canvas.add(img); canvas.setActiveObject(img); setTool('select'); saveHistory(); }); }
+        function handleImageUpload(e) { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (f) => addImageToCanvas(f.target.result); reader.readAsDataURL(file); }
+
+        window.addEventListener('dragover', (e) => { 
+            e.preventDefault(); 
+            if (e.dataTransfer.types && e.dataTransfer.types.includes("Files")) { document.body.classList.add('drag-over'); }
+        });
+        window.addEventListener('dragleave', (e) => { e.preventDefault(); document.body.classList.remove('drag-over'); });
+        window.addEventListener('drop', (e) => {
+            e.preventDefault(); document.body.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0]; if (!file) return;
+            if (file.type.startsWith('image/')) { const r = new FileReader(); r.onload = (f) => addImageToCanvas(f.target.result); r.readAsDataURL(file); } 
+            else if (file.type === 'application/pdf') { const r = new FileReader(); r.onload = (f) => loadPDFFromBuffer(f.target.result); r.readAsArrayBuffer(file); } 
+            else if (file.name.endsWith('.json')) { const r = new FileReader(); r.onload = (f) => loadProject(f.target.result); r.readAsText(file); }
+        });
+
+        // --- STYLES ET OUTILS ---
+        function updateStyleBar() {
+            const activeObj = canvas.getActiveObject(); let mode = state.tool;
+            if (mode === 'select' && activeObj) { if (activeObj.type === 'i-text') mode = 'text'; else if (activeObj.type === 'rect' || activeObj.type === 'ellipse') mode = 'rect'; else mode = 'draw'; }
+            if (mode === 'select' && !activeObj) { styleBar.classList.add('hidden'); return; }
+            styleBar.classList.remove('hidden');
+
+            const wPrimary = document.getElementById('group-primary-color'), wWidth = document.getElementById('group-stroke-width'), wFill = document.getElementById('group-fill-color'), wText = document.getElementById('group-text'), label = document.getElementById('color-label');
+            wPrimary.style.display = 'flex'; wWidth.style.display = 'none'; wFill.style.display = 'none'; wText.style.display = 'none';
+
+            if (mode === 'text') { label.innerText = "Texte"; wText.style.display = 'flex'; } else if (mode === 'rect' || mode === 'circle') { label.innerText = "Bordure"; wWidth.style.display = 'flex'; wFill.style.display = 'flex'; } else { label.innerText = "Couleur"; wWidth.style.display = 'flex'; }
+
+            if (activeObj) {
+                if (mode === 'text') { document.getElementById('primary-color').value = activeObj.fill; document.getElementById('font-family').value = activeObj.fontFamily; document.getElementById('font-size').value = activeObj.fontSize;
+                } else {
+                    document.getElementById('primary-color').value = activeObj.stroke || state.primaryColor; document.getElementById('stroke-width').value = activeObj.strokeWidth || state.strokeWidth;
+                    if (mode === 'rect' || mode === 'circle') { const isTransp = activeObj.fill === 'transparent'; document.getElementById('fill-transparent').checked = isTransp; if (!isTransp && activeObj.fill) document.getElementById('fill-color').value = activeObj.fill; }
+                }
+            }
+        }
+
+        document.getElementById('primary-color').oninput = (e) => { state.primaryColor = e.target.value; if (state.tool === 'highlight') { canvas.freeDrawingBrush.color = hexToRgba(state.primaryColor, 0.4); } else { canvas.freeDrawingBrush.color = state.primaryColor; } const obj = canvas.getActiveObject(); if (obj) { if (obj.type === 'i-text') obj.set('fill', state.primaryColor); else obj.set('stroke', state.primaryColor); canvas.requestRenderAll(); } };
+        document.getElementById('stroke-width').oninput = (e) => { state.strokeWidth = parseInt(e.target.value); if (state.tool === 'highlight') { canvas.freeDrawingBrush.width = state.strokeWidth * 5; } else { canvas.freeDrawingBrush.width = state.strokeWidth * 2; } const obj = canvas.getActiveObject(); if (obj && obj.type !== 'i-text') { obj.set('strokeWidth', state.strokeWidth); canvas.requestRenderAll(); } };
+        document.getElementById('fill-color').oninput = (e) => { state.fillColor = e.target.value; state.isFillTransparent = false; document.getElementById('fill-transparent').checked = false; const obj = canvas.getActiveObject(); if (obj && (obj.type === 'rect' || obj.type === 'ellipse')) { obj.set('fill', state.fillColor); canvas.requestRenderAll(); } };
+        document.getElementById('fill-transparent').onchange = (e) => { state.isFillTransparent = e.target.checked; const obj = canvas.getActiveObject(); if (obj && (obj.type === 'rect' || obj.type === 'ellipse')) { obj.set('fill', state.isFillTransparent ? 'transparent' : state.fillColor); canvas.requestRenderAll(); } };
+        document.getElementById('font-family').onchange = (e) => { state.fontFamily = e.target.value; const obj = canvas.getActiveObject(); if (obj && obj.type === 'i-text') { obj.set('fontFamily', state.fontFamily); canvas.requestRenderAll(); } };
+        document.getElementById('font-size').oninput = (e) => { state.fontSize = parseInt(e.target.value); const obj = canvas.getActiveObject(); if (obj && obj.type === 'i-text') { obj.set('fontSize', state.fontSize); canvas.requestRenderAll(); } };
+
+        canvas.on('selection:created', updateStyleBar); canvas.on('selection:updated', updateStyleBar); canvas.on('selection:cleared', updateStyleBar);
+
+        function toggleMenu() { const menu = document.getElementById('main-menu'); menu.style.display = menu.style.display === 'flex' ? 'none' : 'flex'; }
+        function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
+        function openClearModal() { document.getElementById('clear-modal').style.display = 'flex'; document.getElementById('main-menu').style.display = 'none'; }
+        function clearAll() { canvas.getObjects().forEach(o => canvas.remove(o)); closeModals(); saveHistory(); updateStyleBar(); }
+
+        // --- SIGNATURES ---
+        let savedSignatures = JSON.parse(localStorage.getItem('userSignatures')) || [];
+        const sigCanvas = document.getElementById('sig-canvas'); const sigCtx = sigCanvas.getContext('2d'); let isSigning = false;
+        sigCtx.lineWidth = 3; sigCtx.lineCap = 'round'; sigCtx.strokeStyle = '#000';
+        sigCanvas.onmousedown = (e) => { isSigning = true; sigCtx.beginPath(); sigCtx.moveTo(e.offsetX, e.offsetY); }; sigCanvas.onmousemove = (e) => { if (isSigning) { sigCtx.lineTo(e.offsetX, e.offsetY); sigCtx.stroke(); }}; sigCanvas.onmouseup = () => isSigning = false; sigCanvas.onmouseout = () => isSigning = false;
+        function openSignatureManager() { closeModals(); if (savedSignatures.length === 0) openDrawSignature(); else { renderSignatureList(); document.getElementById('sig-list-modal').style.display = 'flex'; } }
+        function renderSignatureList() { const container = document.getElementById('sig-list-container'); container.innerHTML = ''; savedSignatures.forEach((sig, index) => { const wrapper = document.createElement('div'); wrapper.className = 'sig-item'; const img = document.createElement('img'); img.src = sig; wrapper.onclick = () => useSignature(index); const delBtn = document.createElement('button'); delBtn.className = 'btn-delete-sig'; delBtn.innerHTML = '<i class="ph ph-trash"></i>'; delBtn.onclick = (e) => { e.stopPropagation(); deleteSignature(index); }; wrapper.appendChild(img); wrapper.appendChild(delBtn); container.appendChild(wrapper); }); }
+        function openDrawSignature() { closeModals(); sigCtx.clearRect(0,0,350,150); document.getElementById('sig-draw-modal').style.display = 'flex'; }
+        function saveNewSignature() { const data = sigCanvas.toDataURL('image/png'); savedSignatures.push(data); localStorage.setItem('userSignatures', JSON.stringify(savedSignatures)); closeModals(); useSignature(savedSignatures.length - 1); }
+        function deleteSignature(index) { savedSignatures.splice(index, 1); localStorage.setItem('userSignatures', JSON.stringify(savedSignatures)); if (savedSignatures.length === 0) closeModals(); else renderSignatureList(); }
+        function useSignature(index) { fabric.Image.fromURL(savedSignatures[index], (img) => { const center = canvas.getVpCenter(); img.set({ left: center.x, top: center.y, originX: 'center', originY: 'center', scaleX: 0.5, scaleY: 0.5, hoverCursor: 'move' }); canvas.add(img); canvas.setActiveObject(img); setTool('select'); closeModals(); saveHistory(); }); }
+
+        // --- MOTEUR VECTORIEL ---
+        let isDown = false, startX, startY, tempBox = null;
+        canvas.on('mouse:down', function(o) {
+            if (o.target && o.target.type === 'i-text') { o.target.on('mousedblclick', () => o.target.enterEditing()); }
+            if (o.target && state.tool !== 'draw' && state.tool !== 'highlight') return; 
+            if (state.tool === 'select' || state.tool === 'draw' || state.tool === 'highlight') return;
+            if (canvas.getActiveObject() && canvas.getActiveObject().isEditing) { canvas.getActiveObject().exitEditing(); canvas.discardActiveObject(); }
+            const pointer = canvas.getPointer(o.e); startX = pointer.x; startY = pointer.y; isDown = true;
+            if (state.tool === 'text') { const text = new fabric.IText('Texte', { left: startX, top: startY, fill: state.primaryColor, fontSize: state.fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' }); text.setControlsVisibility({ mt: true, mb: true, ml: true, mr: true }); canvas.add(text); canvas.setActiveObject(text); text.enterEditing(); text.selectAll(); return; }
+            if (['rect', 'circle', 'check', 'cross'].includes(state.tool)) { 
+                const fillValue = ((state.tool === 'rect' || state.tool === 'circle') && !state.isFillTransparent) ? state.fillColor : 'transparent'; 
+                if (state.tool === 'circle') tempBox = new fabric.Ellipse({ left: startX, top: startY, rx: 0, ry: 0, fill: fillValue, stroke: state.primaryColor, strokeWidth: state.strokeWidth, selectable: false, hoverCursor: 'move' });
+                else tempBox = new fabric.Rect({ left: startX, top: startY, width: 0, height: 0, fill: fillValue, stroke: state.primaryColor, strokeWidth: state.strokeWidth, strokeDashArray: state.tool === 'rect' ? null : [5, 5], selectable: false, hoverCursor: 'move' });
+                canvas.add(tempBox);
+            } else if (state.tool === 'line' || state.tool === 'arrow') { tempBox = new fabric.Line([startX, startY, startX, startY], { stroke: state.primaryColor, strokeWidth: state.strokeWidth * 1.5, strokeLineCap: 'round', selectable: false, hoverCursor: 'move' }); canvas.add(tempBox); }
+        });
+        canvas.on('mouse:move', function(o) {
+            if (!isDown || !tempBox) return; const pointer = canvas.getPointer(o.e);
+            if (['rect', 'check', 'cross'].includes(state.tool)) { let w = Math.abs(pointer.x - startX), h = Math.abs(pointer.y - startY); if (state.tool !== 'rect') h = w = Math.max(w, h); tempBox.set({ width: w, height: h, left: pointer.x < startX ? startX - w : startX, top: pointer.y < startY ? startY - h : startY });
+            } else if (state.tool === 'circle') { let rx = Math.abs(startX - pointer.x)/2; let ry = Math.abs(startY - pointer.y)/2; tempBox.set({ rx: rx, ry: ry, left: Math.min(startX, pointer.x), top: Math.min(startY, pointer.y) });
+            } else if (state.tool === 'line' || state.tool === 'arrow') { tempBox.set({ x2: pointer.x, y2: pointer.y }); } canvas.requestRenderAll();
+        });
+        canvas.on('mouse:up', function() {
+            isDown = false;
+            if (['check', 'cross'].includes(state.tool) && tempBox) {
+                const sizeDragged = tempBox.width; if (sizeDragged > 5) state.lastSymbolSize = sizeDragged; const size = state.lastSymbolSize; const cx = tempBox.left + (sizeDragged > 5 ? size/2 : 0), cy = tempBox.top + (sizeDragged > 5 ? size/2 : 0); canvas.remove(tempBox);
+                const pathStr = state.tool === 'check' ? `M ${cx-size/2} ${cy} L ${cx-size/6} ${cy+size/2} L ${cx+size/2} ${cy-size/2}` : `M ${cx-size/2} ${cy-size/2} L ${cx+size/2} ${cy+size/2} M ${cx+size/2} ${cy-size/2} L ${cx-size/2} ${cy+size/2}`;
+                canvas.add(new fabric.Path(pathStr, { stroke: state.primaryColor, strokeWidth: state.strokeWidth * 1.5, fill: '', strokeLineCap: 'round', hoverCursor: 'move' }));
+            } else if (state.tool === 'arrow' && tempBox) {
+                let x1 = tempBox.x1, y1 = tempBox.y1, x2 = tempBox.x2, y2 = tempBox.y2; canvas.remove(tempBox); let angle = Math.atan2(y2 - y1, x2 - x1); let headlen = 15 + state.strokeWidth * 2;
+                let p1x = x2 - headlen * Math.cos(angle - Math.PI/6); let p1y = y2 - headlen * Math.sin(angle - Math.PI/6); let p2x = x2 - headlen * Math.cos(angle + Math.PI/6); let p2y = y2 - headlen * Math.sin(angle + Math.PI/6);
+                let pathStr = `M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${p1x} ${p1y} M ${x2} ${y2} L ${p2x} ${p2y}`;
+                let arrow = new fabric.Path(pathStr, { stroke: state.primaryColor, strokeWidth: state.strokeWidth * 1.5, fill: '', strokeLineCap: 'round', strokeLineJoin: 'round', selectable: true, hoverCursor: 'move' }); canvas.add(arrow);
+            } else if (tempBox) { tempBox.setCoords(); tempBox.set({ selectable: true, hoverCursor: 'move' }); } tempBox = null;
+        });
+        canvas.on('object:scaling', function(e) { if (e.target && e.target.type === 'i-text') { e.target.set({ fontSize: e.target.fontSize * e.target.scaleX, scaleX: 1, scaleY: 1 }); if (canvas.getActiveObject() === e.target) document.getElementById('font-size').value = Math.round(e.target.fontSize); } });
+
+        const snapZone = 10; let guideLines = [];
+        canvas.on('object:moving', function(e) { const obj = e.target; const center = canvas.getVpCenter(); guideLines.forEach(l => canvas.remove(l)); guideLines = []; if (Math.abs(obj.top - center.y) < snapZone) { obj.set({ top: center.y }); const line = new fabric.Line([-9999, center.y, 9999, center.y], { stroke: '#7c3aed', strokeWidth: 1/canvas.getZoom(), strokeDashArray: [5,5], selectable: false, evented: false }); canvas.add(line); guideLines.push(line); } if (Math.abs(obj.left - center.x) < snapZone) { obj.set({ left: center.x }); const line = new fabric.Line([center.x, -9999, center.x, 9999], { stroke: '#7c3aed', strokeWidth: 1/canvas.getZoom(), strokeDashArray: [5,5], selectable: false, evented: false }); canvas.add(line); guideLines.push(line); } });
+        canvas.on('mouse:up', function() { guideLines.forEach(l => canvas.remove(l)); guideLines = []; });
+        canvas.on('mouse:wheel', function(opt) { const e = opt.e; e.preventDefault(); e.stopPropagation(); if (e.ctrlKey) { let zoom = canvas.getZoom() * (0.995 ** e.deltaY); if (zoom > 5) zoom = 5; if (zoom < 0.2) zoom = 0.2; canvas.zoomToPoint({ x: e.offsetX, y: e.offsetY }, zoom); } else { canvas.viewportTransform[4] -= e.deltaX; canvas.viewportTransform[5] -= e.deltaY; canvas.requestRenderAll(); } });
+
+        function setTool(t) {
+            state.tool = t; document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active')); document.querySelector(`[data-tool="${t}"]`).classList.add('active');
+            canvas.isDrawingMode = (t === 'draw' || t === 'highlight'); 
+            if (t === 'highlight') { canvas.freeDrawingBrush.color = hexToRgba(state.primaryColor, 0.4); canvas.freeDrawingBrush.width = state.strokeWidth * 5; } else { canvas.freeDrawingBrush.color = state.primaryColor; canvas.freeDrawingBrush.width = state.strokeWidth * 2; }
+            canvas.selection = (t === 'select'); canvas.forEachObject(o => { o.selectable = true; o.evented = true; o.hoverCursor = 'move'; }); updateStyleBar();
+        }
+        document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.onclick = (e) => setTool(e.currentTarget.dataset.tool));
+
+        let history = [], historyIndex = -1, isHistoryAction = false;
+        function updateHistoryButtons() { document.getElementById('btn-undo').disabled = historyIndex <= 0; document.getElementById('btn-redo').disabled = historyIndex >= history.length - 1; }
+        function saveHistory() { if (isHistoryAction) return; history = history.slice(0, historyIndex + 1); history.push(canvas.getObjects().map(o => o.toObject(['selectable', 'lockUniScaling', 'hoverCursor']))); historyIndex++; updateHistoryButtons(); }
+        canvas.on('object:added', saveHistory); canvas.on('object:modified', saveHistory);
+        function loadHistory(i) { isHistoryAction = true; canvas.getObjects().forEach(o => canvas.remove(o)); fabric.util.enlivenseObjects(history[i], (objs) => { objs.forEach(o => canvas.add(o)); canvas.renderAll(); isHistoryAction = false; updateHistoryButtons(); }); }
+        function undo() { if (historyIndex > 0) loadHistory(--historyIndex); }
+        function redo() { if (historyIndex < history.length - 1) loadHistory(++historyIndex); }
+        window.addEventListener('keydown', (e) => { const isCtrl = e.metaKey || e.ctrlKey; if (e.target.tagName === 'INPUT' || (canvas.getActiveObject() && canvas.getActiveObject().isEditing)) return; if (isCtrl && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; } if (e.key === 'Delete' || e.key === 'Backspace') { if (canvas.getActiveObject()) { e.preventDefault(); canvas.remove(...canvas.getActiveObjects()); canvas.discardActiveObject(); saveHistory(); updateStyleBar(); } } });
+
+        // --- EXPORT MULTIPAGE (CORRIGÉ AVEC RESET DE LA CAMÉRA) ---
+        async function exportPdf() {
+            document.getElementById('loading-text').innerText = "Génération du PDF...";
+            document.getElementById('loading-overlay').style.display = 'flex'; 
+            saveCurrentPageData(); const originalPage = currentPageNum;
+            
+            try {
+                const pdfDocEdit = await PDFLib.PDFDocument.load(pdfBytesOriginal);
+
+                for (let i = 1; i <= totalPages; i++) {
+                    if (pagesData[i] && pagesData[i].length > 40) {
+                        await renderPage(i);
+                        const bg = canvas.backgroundImage; 
+                        canvas.backgroundImage = null; 
+                        
+                        let dataUrl;
+                        if (bg) {
+                            // --- FIX DE L'ALIGNEMENT ---
+                            // 1. Sauvegarde de la caméra actuelle (zoom, pan)
+                            const vpt = canvas.viewportTransform.slice();
+                            
+                            // 2. Réinitialisation de la caméra à 100% sans décalage
+                            canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+                            
+                            // 3. Export pixel-perfect des dimensions exactes du document
+                            dataUrl = canvas.toDataURL({ 
+                                format: 'png', 
+                                left: 0, 
+                                top: 0, 
+                                width: bg.width, 
+                                height: bg.height, 
+                                multiplier: 1 
+                            });
+                            
+                            // 4. Restauration de la caméra
+                            canvas.viewportTransform = vpt;
+                        } else {
+                            dataUrl = canvas.toDataURL({ format: 'png', multiplier: 1 });
+                        }
+                        
+                        canvas.backgroundImage = bg;
+                        const pngImage = await pdfDocEdit.embedPng(dataUrl);
+                        const pdfPage = pdfDocEdit.getPages()[i - 1];
+                        pdfPage.drawImage(pngImage, { x: 0, y: 0, width: pdfPage.getSize().width, height: pdfPage.getSize().height });
+                    }
+                }
+                
+                await renderPage(originalPage);
+                const link = document.createElement('a'); 
+                link.href = URL.createObjectURL(new Blob([await pdfDocEdit.save()], { type: 'application/pdf' }));
+                link.download = 'document_annote.pdf'; link.click(); 
+            } catch (error) {
+                console.error("Erreur lors de l'exportation:", error);
+                alert("Une erreur s'est produite pendant l'exportation.");
+            }
+            
+            document.getElementById('loading-overlay').style.display = 'none'; 
+        }
+    </script>
+</body>
+</html>
