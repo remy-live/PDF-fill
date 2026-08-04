@@ -4,13 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Éditeur PDF - Pro Master Final (Rendu Parfait)</title>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
-    
+
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+    <meta name="theme-color" content="#7c3aed">
+
+    <script src="libs/pdf.min.js"></script>
+    <script src="libs/fabric.min.js"></script>
+    <script src="libs/pdf-lib.min.js"></script>
+    <link rel="stylesheet" href="libs/phosphor/style.css">
+
     <style>
+        @font-face { font-family: 'Dancing Script'; src: url('libs/fonts/dancing-script.woff2') format('woff2'); font-display: swap; }
+        @font-face { font-family: 'Pacifico'; src: url('libs/fonts/pacifico.woff2') format('woff2'); font-display: swap; }
+
         :root {
             --bg-app: #e5e7eb; --bg-panel: rgba(255, 255, 255, 0.95);
             --text-color: #374151; --icon-color: #4b5563;
@@ -78,6 +85,10 @@
         body.drag-over::after { content: "Glissez votre fichier ici"; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(124, 58, 237, 0.1); border: 4px dashed var(--active-icon); z-index: 1000; display: flex; justify-content: center; align-items: center; font-size: 2rem; color: var(--active-icon); font-weight: bold; pointer-events: none; }
         #loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 9999; display: none; justify-content: center; align-items: center; font-size: 1.5rem; color: var(--active-icon); font-weight: bold; flex-direction: column; gap: 10px; }
 
+        /* --- TOAST --- */
+        #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%) translateY(-90px); background: #111827; color: white; padding: 10px 18px; border-radius: 100px; font-size: 0.9rem; z-index: 500; transition: transform 0.3s, opacity 0.3s; opacity: 0; pointer-events: none; max-width: calc(100vw - 32px); box-sizing: border-box; text-align: center; }
+        #toast.visible { transform: translateX(-50%) translateY(0); opacity: 1; }
+
         /* --- APERÇU TAILLE DE TEXTE --- */
         #font-preview { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 28px; max-height: 72px; padding: 0 8px; border: 1px dashed var(--divider); border-radius: 8px; background: white; line-height: 1; white-space: nowrap; overflow: hidden; }
 
@@ -124,6 +135,8 @@
         <span id="loading-text">Opération en cours...</span>
     </div>
 
+    <div id="toast"></div>
+
     <div id="main-toolbar" class="toolbar">
         <div id="drag-handle-main" class="drag-handle"><i class="ph ph-dots-six-vertical"></i></div>
         <div class="tool-group">
@@ -135,6 +148,7 @@
             <button class="tool-btn active" data-tool="select" title="Sélection (V)"><i class="ph ph-cursor"></i></button>
             <button class="tool-btn" data-tool="draw" title="Dessin"><i class="ph ph-pencil-simple"></i></button>
             <button class="tool-btn" data-tool="highlight" title="Surligneur"><i class="ph ph-highlighter"></i></button>
+            <button class="tool-btn" data-tool="eraser" title="Gomme (efface les objets touchés)"><i class="ph ph-eraser"></i></button>
             <button class="tool-btn" data-tool="text" title="Texte"><i class="ph ph-text-t"></i></button>
             <button class="tool-btn" data-tool="line" title="Ligne"><i class="ph ph-line-segment"></i></button>
             <button class="tool-btn" data-tool="arrow" title="Flèche"><i class="ph ph-arrow-up-right"></i></button>
@@ -153,11 +167,13 @@
     </div>
 
     <div id="main-menu" class="dropdown">
+        <button onclick="openNewDocModal()"><i class="ph ph-file-plus"></i> Nouveau document</button>
         <button onclick="document.getElementById('file-upload').click()"><i class="ph ph-file-pdf"></i> Ouvrir un PDF</button>
         <input type="file" id="file-upload" accept="application/pdf" style="display:none" onchange="handleFileUpload(event)">
         <button onclick="document.getElementById('project-upload').click()"><i class="ph ph-folder-open"></i> Ouvrir Projet (.json)</button>
         <input type="file" id="project-upload" accept=".json" style="display:none" onchange="handleProjectUpload(event)">
         <button onclick="saveProject()"><i class="ph ph-floppy-disk"></i> Sauvegarder Projet</button>
+        <button onclick="toggleFieldHints()"><i class="ph ph-textbox"></i> <span id="field-toggle-label">Masquer les champs du formulaire</span></button>
         <button class="danger" onclick="openClearModal()"><i class="ph ph-trash"></i> Tout effacer (Cette page)</button>
     </div>
 
@@ -166,7 +182,8 @@
         <div id="group-primary-color" class="style-group"><span id="color-label">Couleur</span><input type="color" id="primary-color" value="#1e1e1e"></div>
         <div id="group-stroke-width" class="style-group"><i class="ph ph-line-segments"></i><input type="range" id="stroke-width" min="1" max="10" value="3"></div>
         <div id="group-fill-color" class="style-group"><div class="divider-v"></div><span>Fond</span><input type="color" id="fill-color" value="#ffffff"><label style="display: flex; align-items: center; gap: 4px; cursor: pointer;"><input type="checkbox" id="fill-transparent" checked> Vide</label></div>
-        <div id="group-text" class="style-group"><div class="divider-v"></div><select id="font-family"><option value="Helvetica">Helvetica</option><option value="Times New Roman">Times Roman</option><option value="Courier">Courier</option></select><input type="range" id="font-size-slider" min="8" max="72" value="16"><input type="number" id="font-size" value="16" min="8" max="72"><span id="font-preview" title="Taille réelle du texte à l'écran">Aa</span></div>
+        <div id="group-text" class="style-group"><div class="divider-v"></div><select id="font-family"><option value="Helvetica">Helvetica</option><option value="Times New Roman">Times Roman</option><option value="Courier">Courier</option><option value="Dancing Script">Dancing Script</option><option value="Pacifico">Pacifico</option></select><input type="range" id="font-size-slider" min="8" max="72" value="16"><input type="number" id="font-size" value="16" min="8" max="72"><span id="font-preview" title="Taille réelle du texte à l'écran">Aa</span></div>
+        <div id="group-delete" class="style-group"><div class="divider-v"></div><button class="tool-btn" id="btn-delete-obj" onclick="deleteSelection()" title="Supprimer la sélection"><i class="ph ph-trash" style="color:#dc2626"></i></button></div>
     </div>
 
     <div id="pagination-bar" class="toolbar pagination-bar hidden">
@@ -184,9 +201,20 @@
             </div>
     </div>
 
+    <div id="newdoc-modal" class="modal-overlay"><div class="modal"><h3>Nouveau document ?</h3><p>Le document en cours et ses annotations seront remplacés par une page vierge.</p><div class="modal-actions"><button class="btn-cancel" onclick="closeModals()">Annuler</button><button class="btn-confirm" onclick="confirmNewDocument()">Nouveau document</button></div></div></div>
     <div id="clear-modal" class="modal-overlay"><div class="modal"><h3>Tout effacer ?</h3><p>Cette action supprimera toutes vos annotations sur cette page.</p><div class="modal-actions"><button class="btn-cancel" onclick="closeModals()">Annuler</button><button class="btn-confirm" onclick="clearAll()" style="background: #dc2626;">Effacer</button></div></div></div>
     <div id="sig-list-modal" class="modal-overlay"><div class="modal"><h3>Vos Signatures</h3><div id="sig-list-container" style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; margin: 20px 0;"></div><div class="modal-actions"><button class="btn-cancel" onclick="closeModals()">Fermer</button><button class="btn-confirm" onclick="openDrawSignature()">+ Nouvelle Signature</button></div></div></div>
-    <div id="sig-draw-modal" class="modal-overlay"><div class="modal"><h3>Dessiner une Signature</h3><canvas id="sig-canvas" width="350" height="150"></canvas><div class="modal-actions"><button class="btn-cancel" onclick="openSignatureManager()">Annuler</button><button class="btn-cancel" onclick="sigCtx.clearRect(0,0,350,150)">Effacer</button><button class="btn-confirm" onclick="saveNewSignature()">Sauvegarder</button></div></div></div>
+    <div id="sig-draw-modal" class="modal-overlay"><div class="modal"><h3>Dessiner une Signature</h3><canvas id="sig-canvas" width="350" height="150"></canvas><div class="modal-actions"><button class="btn-cancel" onclick="openSignatureManager()">Annuler</button><button class="btn-cancel" onclick="sigCtx.clearRect(0,0,350,150)">Effacer</button><button class="btn-confirm" onclick="saveNewSignature()">Sauvegarder</button></div>
+        <div style="border-top: 1px solid #e5e7eb; margin-top: 20px; padding-top: 16px; text-align: left;">
+            <strong style="color: var(--text-color); font-size: 0.9rem;">Ou tapez votre signature</strong>
+            <div style="display: flex; gap: 8px; margin-top: 10px;">
+                <input type="text" id="sig-text-input" placeholder="Votre nom" style="flex: 1; min-width: 0; border: 1px solid var(--divider); border-radius: 8px; padding: 8px 10px; font-size: 16px; outline: none;" oninput="updateTypedSigPreview()">
+                <select id="sig-font" onchange="updateTypedSigPreview()"><option value="Dancing Script">Dancing Script</option><option value="Pacifico">Pacifico</option></select>
+            </div>
+            <div id="sig-text-preview" style="min-height: 60px; display: flex; align-items: center; justify-content: center; font-size: 34px; color: #111; font-family: 'Dancing Script'; overflow: hidden;"></div>
+            <div class="modal-actions" style="margin-top: 4px;"><button class="btn-confirm" onclick="saveTypedSignature()">Utiliser cette signature</button></div>
+        </div>
+    </div></div>
 
     <script>
         function hexToRgba(hex, alpha) { let r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16); return `rgba(${r}, ${g}, ${b}, ${alpha})`; }
@@ -194,9 +222,10 @@
         function base64ToArrayBuffer(base64) { const binary_string = window.atob(base64); const len = binary_string.length; const bytes = new Uint8Array(len); for (let i = 0; i < len; i++) bytes[i] = binary_string.charCodeAt(i); return bytes.buffer; }
 
         const pdfjsLib = window['pdfjs-dist/build/pdf'];
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
+        if ('serviceWorker' in navigator && location.protocol.startsWith('http')) { navigator.serviceWorker.register('sw.js').catch(() => {}); }
         
-        const state = { tool: 'select', primaryColor: '#1e1e1e', fillColor: '#ffffff', isFillTransparent: true, strokeWidth: 3, fontSize: 16, fontFamily: 'Helvetica', lastSymbolSize: 20 };
+        const state = { tool: 'select', primaryColor: '#1e1e1e', fillColor: '#ffffff', isFillTransparent: true, strokeWidth: 3, fontSize: 16, fontFamily: 'Helvetica', lastSymbolSize: 20, showFields: true };
         const canvas = new fabric.Canvas('pdf-editor', { width: window.innerWidth, height: window.innerHeight, selection: true });
 
         function fitPageToScreen() {
@@ -253,18 +282,21 @@
             pdfBytesOriginal = buffer;
             pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
             totalPages = pdfDoc.numPages;
-            if (!isProjectLoad) { pagesData = {}; currentPageNum = 1; }
+            if (!isProjectLoad) { pagesData = {}; currentPageNum = 1; fieldsToastShown = false; }
             if (currentPageNum > totalPages) currentPageNum = totalPages;
 
             document.getElementById('page-count').innerText = totalPages;
             if(totalPages > 0) paginationBar.classList.remove('hidden');
             if(totalPages > 0) await renderPage(currentPageNum);
             else canvas.clear();
+            scheduleAutosave();
         }
 
         async function renderPage(pageNum) {
             const page = await pdfDoc.getPage(pageNum);
             const viewport = page.getViewport({ scale: 2.0 });
+            let formAnnotations = [];
+            try { formAnnotations = (await page.getAnnotations()).filter(a => a.subtype === 'Widget' && (a.fieldType === 'Tx' || (a.fieldType === 'Btn' && a.checkBox))); } catch (e) {}
             const hiddenCanvas = document.createElement('canvas'); hiddenCanvas.width = viewport.width; hiddenCanvas.height = viewport.height;
             await page.render({ canvasContext: hiddenCanvas.getContext('2d'), viewport: viewport }).promise;
 
@@ -282,8 +314,9 @@
                         document.getElementById('btn-prev-page').disabled = pageNum <= 1; 
                         document.getElementById('btn-next-page').disabled = pageNum >= totalPages;
 
+                        addFieldHints(formAnnotations, viewport);
                         setTool(state.tool);
-                        history = []; historyIndex = -1; saveHistory(); 
+                        history = []; historyIndex = -1; saveHistory();
                         resolve();
                     };
 
@@ -296,6 +329,52 @@
             });
         }
 
+        // --- CHAMPS DE FORMULAIRE (AcroForm) ---
+        let fieldsToastShown = false;
+        function addFieldHints(annots, viewport) {
+            if (!annots.length) return;
+            annots.forEach(a => {
+                const r = pdfjsLib.Util.normalizeRect(viewport.convertToViewportRectangle(a.rect));
+                const w = r[2] - r[0], h = r[3] - r[1];
+                if (w < 4 || h < 4) return;
+                const hint = new fabric.Rect({ left: r[0], top: r[1], width: w, height: h, fill: 'rgba(124, 58, 237, 0.08)', stroke: '#7c3aed', strokeWidth: 1, strokeDashArray: [4, 4], selectable: false, evented: true, hoverCursor: 'text', excludeFromExport: true });
+                hint.isFieldHint = true; hint.fieldKind = (a.fieldType === 'Btn') ? 'check' : 'text';
+                const occupied = canvas.getObjects().some(o => { if (o.isFieldHint) return false; const c = o.getCenterPoint(); return c.x >= r[0] && c.x <= r[2] && c.y >= r[1] && c.y <= r[3]; });
+                if (occupied || !state.showFields) hint.visible = false;
+                canvas.add(hint);
+            });
+            canvas.requestRenderAll();
+            if (!fieldsToastShown && state.showFields) { fieldsToastShown = true; showToast('Champs de formulaire détectés : touchez une zone en pointillés pour la remplir'); }
+        }
+
+        function fillFieldHint(hint) {
+            if (hint.fieldKind === 'check') {
+                const size = Math.min(hint.width, hint.height) * 0.7;
+                const cx = hint.left + hint.width / 2, cy = hint.top + hint.height / 2;
+                const pathStr = `M ${cx - size/2} ${cy} L ${cx - size/6} ${cy + size/2} L ${cx + size/2} ${cy - size/2}`;
+                canvas.add(new fabric.Path(pathStr, { stroke: state.primaryColor, strokeWidth: Math.max(2, size / 8), fill: '', strokeLineCap: 'round', hoverCursor: 'move' }));
+                hint.visible = false; canvas.requestRenderAll(); saveHistory();
+            } else {
+                const fontSize = Math.min(Math.max(hint.height * 0.55, 10), 60);
+                const text = new fabric.IText('', { left: hint.left + 4, top: hint.top + (hint.height - fontSize * 1.16 * 1.13) / 2, fill: state.primaryColor, fontSize: fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' });
+                text._sourceHint = hint; hint.visible = false;
+                canvas.add(text); canvas.setActiveObject(text); text.enterEditing(); canvas.requestRenderAll();
+            }
+        }
+
+        canvas.on('text:editing:exited', function(e) {
+            const t = e.target;
+            if (t && !t.text.trim()) { if (t._sourceHint) t._sourceHint.visible = true; canvas.remove(t); canvas.discardActiveObject(); canvas.requestRenderAll(); saveHistory(); updateStyleBar(); }
+        });
+
+        function toggleFieldHints() {
+            state.showFields = !state.showFields;
+            canvas.getObjects().forEach(o => { if (o.isFieldHint) o.visible = state.showFields; });
+            canvas.requestRenderAll();
+            document.getElementById('field-toggle-label').innerText = state.showFields ? 'Masquer les champs du formulaire' : 'Afficher les champs du formulaire';
+            document.getElementById('main-menu').style.display = 'none';
+        }
+
         function saveCurrentPageData() {
             if (!pdfDoc) return;
             const bg = canvas.backgroundImage; canvas.backgroundImage = null;
@@ -306,7 +385,42 @@
         async function prevPage() { if (currentPageNum <= 1) return; saveCurrentPageData(); currentPageNum--; await renderPage(currentPageNum); }
         async function nextPage() { if (currentPageNum >= totalPages) return; saveCurrentPageData(); currentPageNum++; await renderPage(currentPageNum); }
 
-        fetch('https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/web/compressed.tracemonkey-pldi-09.pdf').then(res => res.arrayBuffer()).then(loadPDFFromBuffer);
+        // --- SAUVEGARDE AUTOMATIQUE (IndexedDB) ---
+        function idbOpen() { return new Promise((resolve, reject) => { const req = indexedDB.open('pdf-editor', 1); req.onupgradeneeded = () => req.result.createObjectStore('kv'); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); }); }
+        async function idbSet(key, value) { const db = await idbOpen(); return new Promise((resolve, reject) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(value, key); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }); }
+        async function idbGet(key) { const db = await idbOpen(); return new Promise((resolve, reject) => { const req = db.transaction('kv').objectStore('kv').get(key); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); }); }
+        async function idbDel(key) { const db = await idbOpen(); return new Promise((resolve) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').delete(key); tx.oncomplete = resolve; tx.onerror = resolve; }); }
+
+        function showToast(msg, duration = 3500) { const t = document.getElementById('toast'); t.innerText = msg; t.classList.add('visible'); clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove('visible'), duration); }
+
+        let autosaveTimer = null;
+        function scheduleAutosave() { clearTimeout(autosaveTimer); autosaveTimer = setTimeout(autosaveNow, 1500); }
+        async function autosaveNow() {
+            if (!pdfDoc || !pdfBytesOriginal) return;
+            try { saveCurrentPageData(); await idbSet('autosave', { pdf: pdfBytesOriginal, pagesData: pagesData, currentPageNum: currentPageNum, savedAt: Date.now() }); }
+            catch (e) { console.warn('Sauvegarde automatique impossible:', e); }
+        }
+
+        async function newBlankDocument() {
+            const doc = await PDFLib.PDFDocument.create();
+            doc.addPage([595.28, 841.89]);
+            await loadPDFFromBuffer(await doc.save());
+        }
+        function openNewDocModal() { document.getElementById('newdoc-modal').style.display = 'flex'; document.getElementById('main-menu').style.display = 'none'; }
+        async function confirmNewDocument() { closeModals(); await idbDel('autosave'); pagesData = {}; currentPageNum = 1; await newBlankDocument(); showToast('Nouveau document créé'); }
+
+        (async function init() {
+            try {
+                const saved = await idbGet('autosave');
+                if (saved && saved.pdf) {
+                    pagesData = saved.pagesData || {}; currentPageNum = saved.currentPageNum || 1;
+                    await loadPDFFromBuffer(saved.pdf, true);
+                    showToast('Session précédente restaurée (menu ☰ > Nouveau document pour repartir de zéro)');
+                    return;
+                }
+            } catch (e) { console.warn(e); }
+            await newBlankDocument();
+        })();
 
 
         // --- GESTIONNAIRE DE PAGES ---
@@ -463,8 +577,9 @@
         function updateStyleBar() {
             const activeObj = canvas.getActiveObject(); let mode = state.tool;
             if (mode === 'select' && activeObj) { if (activeObj.type === 'i-text') mode = 'text'; else if (activeObj.type === 'rect' || activeObj.type === 'ellipse') mode = 'rect'; else mode = 'draw'; }
-            if (mode === 'select' && !activeObj) { styleBar.classList.add('hidden'); return; }
+            if ((mode === 'select' || mode === 'eraser') && !activeObj) { styleBar.classList.add('hidden'); return; }
             styleBar.classList.remove('hidden');
+            document.getElementById('group-delete').style.display = activeObj ? 'flex' : 'none';
 
             const wPrimary = document.getElementById('group-primary-color'), wWidth = document.getElementById('group-stroke-width'), wFill = document.getElementById('group-fill-color'), wText = document.getElementById('group-text'), label = document.getElementById('color-label');
             wPrimary.style.display = 'flex'; wWidth.style.display = 'none'; wFill.style.display = 'none'; wText.style.display = 'none';
@@ -502,7 +617,7 @@
         }
         function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
         function openClearModal() { document.getElementById('clear-modal').style.display = 'flex'; document.getElementById('main-menu').style.display = 'none'; }
-        function clearAll() { canvas.getObjects().forEach(o => canvas.remove(o)); closeModals(); saveHistory(); updateStyleBar(); }
+        function clearAll() { canvas.getObjects().filter(o => !o.isFieldHint).forEach(o => canvas.remove(o)); canvas.getObjects().forEach(o => { if (o.isFieldHint && state.showFields) o.visible = true; }); closeModals(); saveHistory(); updateStyleBar(); }
 
         // --- SIGNATURES ---
         let savedSignatures = JSON.parse(localStorage.getItem('userSignatures')) || [];
@@ -517,11 +632,32 @@
         function openDrawSignature() { closeModals(); sigCtx.clearRect(0,0,350,150); document.getElementById('sig-draw-modal').style.display = 'flex'; }
         function saveNewSignature() { const data = sigCanvas.toDataURL('image/png'); savedSignatures.push(data); localStorage.setItem('userSignatures', JSON.stringify(savedSignatures)); closeModals(); useSignature(savedSignatures.length - 1); }
         function deleteSignature(index) { savedSignatures.splice(index, 1); localStorage.setItem('userSignatures', JSON.stringify(savedSignatures)); if (savedSignatures.length === 0) closeModals(); else renderSignatureList(); }
+        function updateTypedSigPreview() {
+            const p = document.getElementById('sig-text-preview');
+            p.style.fontFamily = `'${document.getElementById('sig-font').value}'`;
+            p.innerText = document.getElementById('sig-text-input').value;
+        }
+        async function saveTypedSignature() {
+            const text = document.getElementById('sig-text-input').value.trim(); if (!text) return;
+            const font = document.getElementById('sig-font').value;
+            try { await document.fonts.load(`96px "${font}"`); } catch (e) {}
+            const c = document.createElement('canvas'); let ctx = c.getContext('2d');
+            ctx.font = `96px "${font}"`;
+            c.width = Math.ceil(ctx.measureText(text).width) + 40; c.height = 170;
+            ctx = c.getContext('2d');
+            ctx.font = `96px "${font}"`; ctx.fillStyle = '#000'; ctx.textBaseline = 'middle'; ctx.fillText(text, 20, 85);
+            savedSignatures.push(c.toDataURL('image/png'));
+            localStorage.setItem('userSignatures', JSON.stringify(savedSignatures));
+            closeModals(); useSignature(savedSignatures.length - 1);
+        }
         function useSignature(index) { fabric.Image.fromURL(savedSignatures[index], (img) => { const center = canvas.getVpCenter(); img.set({ left: center.x, top: center.y, originX: 'center', originY: 'center', scaleX: 0.5, scaleY: 0.5, hoverCursor: 'move' }); canvas.add(img); canvas.setActiveObject(img); setTool('select'); closeModals(); saveHistory(); }); }
 
         // --- MOTEUR VECTORIEL ---
         let isDown = false, startX, startY, tempBox = null;
+        let eraserActive = false, eraserDirty = false;
         canvas.on('mouse:down', function(o) {
+            if (o.target && o.target.isFieldHint && state.tool !== 'eraser') { fillFieldHint(o.target); return; }
+            if (state.tool === 'eraser') { if (o.target && !o.target.isFieldHint) { canvas.remove(o.target); eraserDirty = true; canvas.requestRenderAll(); } eraserActive = true; return; }
             if (o.target && o.target.type === 'i-text') { o.target.on('mousedblclick', () => o.target.enterEditing()); }
             if (o.target && state.tool !== 'draw' && state.tool !== 'highlight') return; 
             if (state.tool === 'select' || state.tool === 'draw' || state.tool === 'highlight') return;
@@ -536,6 +672,7 @@
             } else if (state.tool === 'line' || state.tool === 'arrow') { tempBox = new fabric.Line([startX, startY, startX, startY], { stroke: state.primaryColor, strokeWidth: state.strokeWidth * 1.5, strokeLineCap: 'round', selectable: false, hoverCursor: 'move' }); canvas.add(tempBox); }
         });
         canvas.on('mouse:move', function(o) {
+            if (state.tool === 'eraser' && eraserActive) { if (o.target && !o.target.isFieldHint) { canvas.remove(o.target); eraserDirty = true; canvas.requestRenderAll(); } return; }
             if (!isDown || !tempBox) return; const pointer = canvas.getPointer(o.e);
             if (['rect', 'check', 'cross'].includes(state.tool)) { let w = Math.abs(pointer.x - startX), h = Math.abs(pointer.y - startY); if (state.tool !== 'rect') h = w = Math.max(w, h); tempBox.set({ width: w, height: h, left: pointer.x < startX ? startX - w : startX, top: pointer.y < startY ? startY - h : startY });
             } else if (state.tool === 'circle') { let rx = Math.abs(startX - pointer.x)/2; let ry = Math.abs(startY - pointer.y)/2; tempBox.set({ rx: rx, ry: ry, left: Math.min(startX, pointer.x), top: Math.min(startY, pointer.y) });
@@ -543,6 +680,7 @@
         });
         canvas.on('mouse:up', function() {
             isDown = false;
+            if (eraserActive) { eraserActive = false; if (eraserDirty) { eraserDirty = false; saveHistory(); } return; }
             if (['check', 'cross'].includes(state.tool) && tempBox) {
                 const sizeDragged = tempBox.width; if (sizeDragged > 5) state.lastSymbolSize = sizeDragged; const size = state.lastSymbolSize; const cx = tempBox.left + (sizeDragged > 5 ? size/2 : 0), cy = tempBox.top + (sizeDragged > 5 ? size/2 : 0); canvas.remove(tempBox);
                 const pathStr = state.tool === 'check' ? `M ${cx-size/2} ${cy} L ${cx-size/6} ${cy+size/2} L ${cx+size/2} ${cy-size/2}` : `M ${cx-size/2} ${cy-size/2} L ${cx+size/2} ${cy+size/2} M ${cx+size/2} ${cy-size/2} L ${cx-size/2} ${cy+size/2}`;
@@ -596,68 +734,98 @@
 
         function setTool(t) {
             state.tool = t; document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active')); document.querySelector(`[data-tool="${t}"]`).classList.add('active');
-            canvas.isDrawingMode = (t === 'draw' || t === 'highlight'); 
+            canvas.isDrawingMode = (t === 'draw' || t === 'highlight');
             if (t === 'highlight') { canvas.freeDrawingBrush.color = hexToRgba(state.primaryColor, 0.4); canvas.freeDrawingBrush.width = state.strokeWidth * 5; } else { canvas.freeDrawingBrush.color = state.primaryColor; canvas.freeDrawingBrush.width = state.strokeWidth * 2; }
-            canvas.selection = (t === 'select'); canvas.forEachObject(o => { o.selectable = true; o.evented = true; o.hoverCursor = 'move'; }); updateStyleBar();
+            canvas.selection = (t === 'select');
+            const erasing = (t === 'eraser');
+            canvas.defaultCursor = erasing ? 'crosshair' : 'default';
+            canvas.forEachObject(o => { if (o.isFieldHint) return; o.selectable = !erasing; o.evented = true; o.hoverCursor = erasing ? 'crosshair' : 'move'; });
+            if (erasing) canvas.discardActiveObject();
+            canvas.requestRenderAll();
+            updateStyleBar();
         }
+        function deleteSelection() { if (!canvas.getActiveObject()) return; canvas.remove(...canvas.getActiveObjects()); canvas.discardActiveObject(); saveHistory(); updateStyleBar(); }
         document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.onclick = (e) => setTool(e.currentTarget.dataset.tool));
 
         let history = [], historyIndex = -1, isHistoryAction = false;
         function updateHistoryButtons() { document.getElementById('btn-undo').disabled = historyIndex <= 0; document.getElementById('btn-redo').disabled = historyIndex >= history.length - 1; }
-        function saveHistory() { if (isHistoryAction) return; history = history.slice(0, historyIndex + 1); history.push(canvas.getObjects().map(o => o.toObject(['selectable', 'lockUniScaling', 'hoverCursor']))); historyIndex++; updateHistoryButtons(); }
-        canvas.on('object:added', saveHistory); canvas.on('object:modified', saveHistory);
-        function loadHistory(i) { isHistoryAction = true; canvas.getObjects().forEach(o => canvas.remove(o)); fabric.util.enlivenObjects(history[i], (objs) => { objs.forEach(o => canvas.add(o)); canvas.renderAll(); isHistoryAction = false; updateHistoryButtons(); }); }
+        function saveHistory() { if (isHistoryAction) return; history = history.slice(0, historyIndex + 1); history.push(canvas.getObjects().filter(o => !o.isFieldHint).map(o => o.toObject(['selectable', 'lockUniScaling', 'hoverCursor']))); historyIndex++; updateHistoryButtons(); scheduleAutosave(); }
+        canvas.on('object:added', function(e) { if (e.target && e.target.isFieldHint) return; saveHistory(); }); canvas.on('object:modified', saveHistory);
+        function loadHistory(i) { isHistoryAction = true; canvas.getObjects().filter(o => !o.isFieldHint).forEach(o => canvas.remove(o)); fabric.util.enlivenObjects(history[i], (objs) => { objs.forEach(o => canvas.add(o)); canvas.renderAll(); isHistoryAction = false; updateHistoryButtons(); scheduleAutosave(); }); }
         function undo() { if (historyIndex > 0) loadHistory(--historyIndex); }
         function redo() { if (historyIndex < history.length - 1) loadHistory(++historyIndex); }
         window.addEventListener('keydown', (e) => { const isCtrl = e.metaKey || e.ctrlKey; if (e.target.tagName === 'INPUT' || (canvas.getActiveObject() && canvas.getActiveObject().isEditing)) return; if (isCtrl && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; } if (e.key === 'Delete' || e.key === 'Backspace') { if (canvas.getActiveObject()) { e.preventDefault(); canvas.remove(...canvas.getActiveObjects()); canvas.discardActiveObject(); saveHistory(); updateStyleBar(); } } });
 
-        // --- EXPORT MULTIPAGE (CORRIGÉ AVEC RESET DE LA CAMÉRA) ---
+        // --- EXPORT MULTIPAGE (texte vectoriel + calque image pour le reste) ---
+        function hexToRgb01(hex) { return { r: parseInt(hex.slice(1, 3), 16) / 255, g: parseInt(hex.slice(3, 5), 16) / 255, b: parseInt(hex.slice(5, 7), 16) / 255 }; }
+        // Métriques internes de fabric.js : baseline de la 1re ligne = fontSize * 1.13 * (1 - 0.222),
+        // hauteur de ligne = fontSize * lineHeight * 1.13 (cf. _fontSizeMult / _fontSizeFraction)
+        const FABRIC_SIZE_MULT = 1.13, FABRIC_SIZE_FRACTION = 0.222;
+
         async function exportPdf() {
             document.getElementById('loading-text').innerText = "Génération du PDF...";
-            document.getElementById('loading-overlay').style.display = 'flex'; 
+            document.getElementById('loading-overlay').style.display = 'flex';
             saveCurrentPageData(); const originalPage = currentPageNum;
-            
+
             try {
                 const pdfDocEdit = await PDFLib.PDFDocument.load(pdfBytesOriginal);
+                try { pdfDocEdit.getForm().flatten(); } catch (e) { /* certains PDF ont des champs sans apparence */ }
+                const stdFonts = {
+                    'Helvetica': await pdfDocEdit.embedFont(PDFLib.StandardFonts.Helvetica),
+                    'Times New Roman': await pdfDocEdit.embedFont(PDFLib.StandardFonts.TimesRoman),
+                    'Courier': await pdfDocEdit.embedFont(PDFLib.StandardFonts.Courier)
+                };
 
                 for (let i = 1; i <= totalPages; i++) {
                     if (pagesData[i] && pagesData[i].length > 40) {
                         await renderPage(i);
-                        const bg = canvas.backgroundImage; 
-                        canvas.backgroundImage = null; 
-                        
-                        let dataUrl;
-                        if (bg) {
-                            // --- FIX DE L'ALIGNEMENT ---
-                            // 1. Sauvegarde de la caméra actuelle (zoom, pan)
-                            const vpt = canvas.viewportTransform.slice();
-                            
-                            // 2. Réinitialisation de la caméra à 100% sans décalage
-                            canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
-                            
-                            // 3. Export pixel-perfect des dimensions exactes du document
-                            dataUrl = canvas.toDataURL({ 
-                                format: 'png', 
-                                left: 0, 
-                                top: 0, 
-                                width: bg.width, 
-                                height: bg.height, 
-                                multiplier: 1 
-                            });
-                            
-                            // 4. Restauration de la caméra
-                            canvas.viewportTransform = vpt;
-                        } else {
-                            dataUrl = canvas.toDataURL({ format: 'png', multiplier: 1 });
-                        }
-                        
-                        canvas.backgroundImage = bg;
-                        const pngImage = await pdfDocEdit.embedPng(dataUrl);
                         const pdfPage = pdfDocEdit.getPages()[i - 1];
-                        pdfPage.drawImage(pngImage, { x: 0, y: 0, width: pdfPage.getSize().width, height: pdfPage.getSize().height });
+                        const pageSize = pdfPage.getSize();
+                        const bg = canvas.backgroundImage;
+                        const scale = bg ? pageSize.width / bg.width : 0.5; // pixels canvas -> points PDF
+
+                        const allObjects = canvas.getObjects().filter(o => !o.isFieldHint);
+                        const vectorTexts = allObjects.filter(o => {
+                            if (o.type !== 'i-text' || Math.abs(o.angle || 0) > 0.01) return false;
+                            if (!/^#[0-9a-fA-F]{6}$/.test(o.fill) || !stdFonts[o.fontFamily]) return false;
+                            try { stdFonts[o.fontFamily].encodeText(o.text); return true; } catch (err) { return false; }
+                        });
+                        const rasterObjects = allObjects.filter(o => !vectorTexts.includes(o));
+
+                        if (rasterObjects.length > 0) {
+                            vectorTexts.forEach(o => o.visible = false);
+                            canvas.getObjects().forEach(o => { if (o.isFieldHint) o.visible = false; });
+                            canvas.backgroundImage = null;
+                            let dataUrl;
+                            if (bg) {
+                                const vpt = canvas.viewportTransform.slice();
+                                canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+                                dataUrl = canvas.toDataURL({ format: 'png', left: 0, top: 0, width: bg.width, height: bg.height, multiplier: 1 });
+                                canvas.viewportTransform = vpt;
+                            } else {
+                                dataUrl = canvas.toDataURL({ format: 'png', multiplier: 1 });
+                            }
+                            canvas.backgroundImage = bg;
+                            vectorTexts.forEach(o => o.visible = true);
+                            const pngImage = await pdfDocEdit.embedPng(dataUrl);
+                            pdfPage.drawImage(pngImage, { x: 0, y: 0, width: pageSize.width, height: pageSize.height });
+                        }
+
+                        vectorTexts.forEach(o => {
+                            const font = stdFonts[o.fontFamily];
+                            const color = hexToRgb01(o.fill);
+                            const sizePt = o.fontSize * scale;
+                            const lineHeightPx = o.fontSize * o.lineHeight * FABRIC_SIZE_MULT;
+                            const firstBaselinePx = o.fontSize * FABRIC_SIZE_MULT * (1 - FABRIC_SIZE_FRACTION);
+                            o.text.split('\n').forEach((line, li) => {
+                                if (!line) return;
+                                const baselineCanvasY = o.top + firstBaselinePx + li * lineHeightPx;
+                                pdfPage.drawText(line, { x: o.left * scale, y: pageSize.height - baselineCanvasY * scale, size: sizePt, font: font, color: PDFLib.rgb(color.r, color.g, color.b) });
+                            });
+                        });
                     }
                 }
-                
+
                 await renderPage(originalPage);
                 const link = document.createElement('a'); 
                 link.href = URL.createObjectURL(new Blob([await pdfDocEdit.save()], { type: 'application/pdf' }));
