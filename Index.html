@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Éditeur PDF - Pro Master Final (Rendu Parfait)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
@@ -25,7 +25,9 @@
             position: fixed; background: var(--bg-panel); backdrop-filter: blur(10px);
             padding: 8px 12px; border-radius: 100px; box-shadow: var(--shadow);
             border: 1px solid rgba(255, 255, 255, 0.5); display: flex; align-items: center; gap: 8px; z-index: 100;
+            max-width: calc(100vw - 16px); box-sizing: border-box; overflow-x: auto;
         }
+        .toolbar > * { flex-shrink: 0; }
 
         .style-bar { border-radius: 16px; padding: 6px 16px; gap: 16px; transition: opacity 0.2s; }
         .style-bar.hidden { opacity: 0; pointer-events: none; }
@@ -34,7 +36,7 @@
         /* Pagination Minimaliste */
         .pagination-bar { padding: 6px 12px; transition: opacity 0.3s; }
         .pagination-bar.hidden { opacity: 0; pointer-events: none; }
-        .page-info { font-weight: 600; color: var(--text-color); font-size: 0.9rem; margin: 0 8px; min-width: 80px; text-align: center; cursor: pointer; padding: 4px 8px; border-radius: 8px; transition: 0.2s; }
+        .page-info { font-weight: 600; color: var(--text-color); font-size: 0.9rem; margin: 0 8px; min-width: 80px; text-align: center; cursor: pointer; padding: 4px 8px; border-radius: 8px; transition: 0.2s; white-space: nowrap; }
         .page-info:hover { background: var(--active-bg); color: var(--active-icon); }
 
         /* --- GESTIONNAIRE DE PAGES --- */
@@ -69,12 +71,48 @@
         select, input[type="number"] { border: 1px solid var(--divider); border-radius: 8px; padding: 4px 8px; font-size: 0.85rem; outline: none; background: white;}
         input[type="number"] { width: 45px; text-align: center; } input[type="color"] { border: none; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; padding: 0; background: none; } input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; } input[type="color"]::-webkit-color-swatch { border: none; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.1); } input[type="range"] { width: 80px; accent-color: var(--active-icon); }
         .btn-export { background: var(--active-bg); color: var(--active-icon); border: none; padding: 8px 16px; border-radius: 50px; font-weight: 600; cursor: pointer; display: flex; gap: 8px; }
-        .dropdown { position: absolute; top: 50px; right: 0; background: white; border-radius: 12px; box-shadow: var(--shadow); padding: 8px; display: none; flex-direction: column; gap: 4px; min-width: 200px; } .dropdown button { text-align: left; padding: 8px 12px; border: none; background: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 8px; color: var(--text-color); } .dropdown button:hover { background: #f3f4f6; } .dropdown button.danger { color: #dc2626; margin-top: 8px; border-top: 1px solid #f3f4f6; border-radius: 0 0 6px 6px; }
+        .dropdown { position: fixed; z-index: 300; background: white; border-radius: 12px; box-shadow: var(--shadow); padding: 8px; display: none; flex-direction: column; gap: 4px; min-width: 200px; } .dropdown button { text-align: left; padding: 8px 12px; border: none; background: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 8px; color: var(--text-color); } .dropdown button:hover { background: #f3f4f6; } .dropdown button.danger { color: #dc2626; margin-top: 8px; border-top: 1px solid #f3f4f6; border-radius: 0 0 6px 6px; }
         .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 200; } .modal { background: white; padding: 24px; border-radius: 16px; width: 400px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); text-align: center; max-height: 80vh; overflow-y: auto; } .modal h3 { margin-top: 0; } .modal-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; } .btn-cancel { padding: 8px 16px; border: 1px solid #ccc; border-radius: 8px; background: white; cursor: pointer; } .btn-confirm { padding: 8px 16px; border: none; border-radius: 8px; background: var(--active-icon); color: white; cursor: pointer; }
         #sig-canvas { border: 2px dashed #ccc; border-radius: 8px; cursor: crosshair; background: #fafafa; margin: 10px 0; } .sig-item { position: relative; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; cursor: pointer; transition: 0.2s; background: #f9fafb; } .sig-item:hover { border-color: var(--active-icon); background: #f3f4f6; } .sig-item img { max-height: 60px; pointer-events: none; } .btn-delete-sig { position: absolute; top: -8px; right: -8px; background: #dc2626; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; display: flex; justify-content: center; align-items: center; }
         
         body.drag-over::after { content: "Glissez votre fichier ici"; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(124, 58, 237, 0.1); border: 4px dashed var(--active-icon); z-index: 1000; display: flex; justify-content: center; align-items: center; font-size: 2rem; color: var(--active-icon); font-weight: bold; pointer-events: none; }
         #loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 9999; display: none; justify-content: center; align-items: center; font-size: 1.5rem; color: var(--active-icon); font-weight: bold; flex-direction: column; gap: 10px; }
+
+        /* --- APERÇU TAILLE DE TEXTE --- */
+        #font-preview { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 28px; max-height: 72px; padding: 0 8px; border: 1px dashed var(--divider); border-radius: 8px; background: white; line-height: 1; white-space: nowrap; overflow: hidden; }
+
+        /* --- TACTILE --- */
+        .canvas-container, #pdf-editor, #sig-canvas { touch-action: none; }
+        @media (pointer: coarse) {
+            .tool-btn { width: 44px; height: 44px; }
+            select, input[type="number"] { font-size: 16px; }
+            input[type="range"] { width: 110px; }
+        }
+
+        /* --- MOBILE / TABLETTE --- */
+        @media (max-width: 1024px) {
+            #main-toolbar {
+                left: 0 !important; right: 0 !important; top: auto !important; bottom: 0 !important;
+                border-radius: 16px 16px 0 0; max-width: 100vw; box-sizing: border-box;
+                overflow-x: auto; -webkit-overflow-scrolling: touch;
+                padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+            }
+            #main-toolbar > *, #style-bar > * { flex-shrink: 0; }
+            #style-bar {
+                left: 8px !important; right: 8px !important; top: auto !important;
+                bottom: calc(76px + env(safe-area-inset-bottom)) !important;
+                max-width: none; box-sizing: border-box; overflow-x: auto; -webkit-overflow-scrolling: touch;
+            }
+            #pagination-bar { left: 50% !important; top: 12px !important; bottom: auto !important; transform: translateX(-50%); }
+            .drag-handle { display: none; }
+            .btn-label { display: none; }
+            .btn-export { padding: 10px; border-radius: 50%; }
+            .page-manager { bottom: calc(140px + env(safe-area-inset-bottom)); width: calc(100vw - 16px); box-sizing: border-box; }
+            .pm-thumb-wrapper canvas { max-height: 110px; }
+            .pm-btn-add { height: 110px; width: 78px; }
+            .modal { width: min(400px, calc(100vw - 32px)); box-sizing: border-box; }
+            #sig-canvas { max-width: 100%; }
+        }
     </style>
 </head>
 <body>
@@ -108,18 +146,19 @@
             <button class="tool-btn" onclick="openSignatureManager()" title="Signature"><i class="ph ph-signature"></i></button>
         </div>
         <div class="divider-v"></div>
-        <button id="export-btn" class="btn-export" onclick="exportPdf()"><i class="ph ph-download-simple"></i> Exporter PDF</button>
+        <button id="export-btn" class="btn-export" onclick="exportPdf()"><i class="ph ph-download-simple"></i> <span class="btn-label">Exporter PDF</span></button>
         <div class="tool-group">
-            <button class="tool-btn" onclick="toggleMenu()"><i class="ph ph-list"></i></button>
-            <div id="main-menu" class="dropdown">
-                <button onclick="document.getElementById('file-upload').click()"><i class="ph ph-file-pdf"></i> Ouvrir un PDF</button>
-                <input type="file" id="file-upload" accept="application/pdf" style="display:none" onchange="handleFileUpload(event)">
-                <button onclick="document.getElementById('project-upload').click()"><i class="ph ph-folder-open"></i> Ouvrir Projet (.json)</button>
-                <input type="file" id="project-upload" accept=".json" style="display:none" onchange="handleProjectUpload(event)">
-                <button onclick="saveProject()"><i class="ph ph-floppy-disk"></i> Sauvegarder Projet</button>
-                <button class="danger" onclick="openClearModal()"><i class="ph ph-trash"></i> Tout effacer (Cette page)</button>
-            </div>
+            <button class="tool-btn" id="btn-menu" onclick="toggleMenu()"><i class="ph ph-list"></i></button>
         </div>
+    </div>
+
+    <div id="main-menu" class="dropdown">
+        <button onclick="document.getElementById('file-upload').click()"><i class="ph ph-file-pdf"></i> Ouvrir un PDF</button>
+        <input type="file" id="file-upload" accept="application/pdf" style="display:none" onchange="handleFileUpload(event)">
+        <button onclick="document.getElementById('project-upload').click()"><i class="ph ph-folder-open"></i> Ouvrir Projet (.json)</button>
+        <input type="file" id="project-upload" accept=".json" style="display:none" onchange="handleProjectUpload(event)">
+        <button onclick="saveProject()"><i class="ph ph-floppy-disk"></i> Sauvegarder Projet</button>
+        <button class="danger" onclick="openClearModal()"><i class="ph ph-trash"></i> Tout effacer (Cette page)</button>
     </div>
 
     <div id="style-bar" class="toolbar style-bar hidden">
@@ -127,7 +166,7 @@
         <div id="group-primary-color" class="style-group"><span id="color-label">Couleur</span><input type="color" id="primary-color" value="#1e1e1e"></div>
         <div id="group-stroke-width" class="style-group"><i class="ph ph-line-segments"></i><input type="range" id="stroke-width" min="1" max="10" value="3"></div>
         <div id="group-fill-color" class="style-group"><div class="divider-v"></div><span>Fond</span><input type="color" id="fill-color" value="#ffffff"><label style="display: flex; align-items: center; gap: 4px; cursor: pointer;"><input type="checkbox" id="fill-transparent" checked> Vide</label></div>
-        <div id="group-text" class="style-group"><div class="divider-v"></div><select id="font-family"><option value="Helvetica">Helvetica</option><option value="Times New Roman">Times Roman</option><option value="Courier">Courier</option></select><input type="number" id="font-size" value="16" min="8" max="72"></div>
+        <div id="group-text" class="style-group"><div class="divider-v"></div><select id="font-family"><option value="Helvetica">Helvetica</option><option value="Times New Roman">Times Roman</option><option value="Courier">Courier</option></select><input type="range" id="font-size-slider" min="8" max="72" value="16"><input type="number" id="font-size" value="16" min="8" max="72"><span id="font-preview" title="Taille réelle du texte à l'écran">Aa</span></div>
     </div>
 
     <div id="pagination-bar" class="toolbar pagination-bar hidden">
@@ -159,7 +198,23 @@
         
         const state = { tool: 'select', primaryColor: '#1e1e1e', fillColor: '#ffffff', isFillTransparent: true, strokeWidth: 3, fontSize: 16, fontFamily: 'Helvetica', lastSymbolSize: 20 };
         const canvas = new fabric.Canvas('pdf-editor', { width: window.innerWidth, height: window.innerHeight, selection: true });
-        window.addEventListener('resize', () => { canvas.setWidth(window.innerWidth); canvas.setHeight(window.innerHeight); });
+
+        function fitPageToScreen() {
+            const bg = canvas.backgroundImage; if (!bg) return;
+            const marginX = 40, marginTop = isMobileLayout() ? 70 : 100, marginBottom = isMobileLayout() ? 170 : 100;
+            const zoom = Math.min((window.innerWidth - marginX) / bg.width, (window.innerHeight - marginTop - marginBottom) / bg.height);
+            canvas.setZoom(zoom);
+            canvas.viewportTransform[4] = (window.innerWidth - bg.width * zoom) / 2;
+            canvas.viewportTransform[5] = marginTop + (window.innerHeight - marginTop - marginBottom - bg.height * zoom) / 2;
+            canvas.requestRenderAll();
+            updateFontPreview();
+        }
+
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+            canvas.setWidth(window.innerWidth); canvas.setHeight(window.innerHeight);
+            clearTimeout(resizeTimer); resizeTimer = setTimeout(fitPageToScreen, 150);
+        });
 
         let pdfBytesOriginal = null;
         let pdfDoc = null;
@@ -168,15 +223,28 @@
         let pagesData = {};
 
         const mainToolbar = document.getElementById('main-toolbar'); const styleBar = document.getElementById('style-bar'); const paginationBar = document.getElementById('pagination-bar');
-        mainToolbar.style.left = (window.innerWidth - mainToolbar.offsetWidth) / 2 + 'px'; mainToolbar.style.top = '20px';
-        styleBar.style.left = (window.innerWidth - 350) / 2 + 'px'; styleBar.style.top = '75px'; 
-        paginationBar.style.left = (window.innerWidth - paginationBar.offsetWidth) / 2 + 'px'; paginationBar.style.bottom = '20px';
+
+        const mqMobile = window.matchMedia('(max-width: 1024px)');
+        function isMobileLayout() { return mqMobile.matches; }
+        function placeToolbarsDesktop() {
+            mainToolbar.style.left = (window.innerWidth - mainToolbar.offsetWidth) / 2 + 'px'; mainToolbar.style.top = '20px';
+            styleBar.style.left = (window.innerWidth - 350) / 2 + 'px'; styleBar.style.top = '75px';
+            paginationBar.style.left = (window.innerWidth - paginationBar.offsetWidth) / 2 + 'px'; paginationBar.style.bottom = '20px';
+        }
+        if (!isMobileLayout()) placeToolbarsDesktop();
+        mqMobile.addEventListener('change', () => {
+            [mainToolbar, styleBar, paginationBar].forEach(el => { el.style.left = ''; el.style.top = ''; el.style.right = ''; el.style.bottom = ''; el.style.transform = ''; });
+            if (!isMobileLayout()) placeToolbarsDesktop();
+            fitPageToScreen();
+        });
 
         function makeDraggable(elementId, handleId) {
             const el = document.getElementById(elementId); const handle = document.getElementById(handleId); let isDragging = false, offsetX, offsetY;
-            handle.addEventListener('mousedown', (e) => { isDragging = true; const rect = el.getBoundingClientRect(); offsetX = e.clientX - rect.left; offsetY = e.clientY - rect.top; el.style.bottom = 'auto'; el.style.right = 'auto'; });
-            window.addEventListener('mousemove', (e) => { if (isDragging) { el.style.left = `${e.clientX - offsetX}px`; el.style.top = `${e.clientY - offsetY}px`; el.style.transform = 'none'; } });
-            window.addEventListener('mouseup', () => isDragging = false);
+            handle.style.touchAction = 'none';
+            handle.addEventListener('pointerdown', (e) => { if (isMobileLayout()) return; isDragging = true; handle.setPointerCapture(e.pointerId); const rect = el.getBoundingClientRect(); offsetX = e.clientX - rect.left; offsetY = e.clientY - rect.top; el.style.bottom = 'auto'; el.style.right = 'auto'; });
+            handle.addEventListener('pointermove', (e) => { if (isDragging) { el.style.left = `${e.clientX - offsetX}px`; el.style.top = `${e.clientY - offsetY}px`; el.style.transform = 'none'; } });
+            handle.addEventListener('pointerup', () => isDragging = false);
+            handle.addEventListener('pointercancel', () => isDragging = false);
         }
         makeDraggable('main-toolbar', 'drag-handle-main'); makeDraggable('style-bar', 'drag-handle-style');
 
@@ -208,12 +276,8 @@
                     
                     const applyViewAndResolve = () => {
                         canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
-                        
-                        const zoom = Math.min((window.innerWidth - 100) / viewport.width, (window.innerHeight - 100) / viewport.height);
-                        canvas.setZoom(zoom); 
-                        canvas.viewportTransform[4] = (window.innerWidth - viewport.width * zoom) / 2; 
-                        canvas.viewportTransform[5] = (window.innerHeight - viewport.height * zoom) / 2;
-                        
+                        fitPageToScreen();
+
                         document.getElementById('page-num').innerText = pageNum;
                         document.getElementById('btn-prev-page').disabled = pageNum <= 1; 
                         document.getElementById('btn-next-page').disabled = pageNum >= totalPages;
@@ -387,6 +451,15 @@
         });
 
         // --- STYLES ET OUTILS ---
+        // Aperçu "Aa" affiché à la taille réelle qu'aura le texte à l'écran (taille police x zoom du document)
+        function updateFontPreview() {
+            const p = document.getElementById('font-preview');
+            const size = parseFloat(document.getElementById('font-size').value) || state.fontSize;
+            p.style.fontSize = Math.min(64, Math.max(6, size * canvas.getZoom())) + 'px';
+            p.style.fontFamily = document.getElementById('font-family').value;
+            p.style.color = document.getElementById('primary-color').value;
+        }
+
         function updateStyleBar() {
             const activeObj = canvas.getActiveObject(); let mode = state.tool;
             if (mode === 'select' && activeObj) { if (activeObj.type === 'i-text') mode = 'text'; else if (activeObj.type === 'rect' || activeObj.type === 'ellipse') mode = 'rect'; else mode = 'draw'; }
@@ -399,24 +472,34 @@
             if (mode === 'text') { label.innerText = "Texte"; wText.style.display = 'flex'; } else if (mode === 'rect' || mode === 'circle') { label.innerText = "Bordure"; wWidth.style.display = 'flex'; wFill.style.display = 'flex'; } else { label.innerText = "Couleur"; wWidth.style.display = 'flex'; }
 
             if (activeObj) {
-                if (mode === 'text') { document.getElementById('primary-color').value = activeObj.fill; document.getElementById('font-family').value = activeObj.fontFamily; document.getElementById('font-size').value = activeObj.fontSize;
+                if (mode === 'text') { document.getElementById('primary-color').value = activeObj.fill; document.getElementById('font-family').value = activeObj.fontFamily; document.getElementById('font-size').value = Math.round(activeObj.fontSize); document.getElementById('font-size-slider').value = Math.round(activeObj.fontSize);
                 } else {
                     document.getElementById('primary-color').value = activeObj.stroke || state.primaryColor; document.getElementById('stroke-width').value = activeObj.strokeWidth || state.strokeWidth;
                     if (mode === 'rect' || mode === 'circle') { const isTransp = activeObj.fill === 'transparent'; document.getElementById('fill-transparent').checked = isTransp; if (!isTransp && activeObj.fill) document.getElementById('fill-color').value = activeObj.fill; }
                 }
             }
+            updateFontPreview();
         }
 
-        document.getElementById('primary-color').oninput = (e) => { state.primaryColor = e.target.value; if (state.tool === 'highlight') { canvas.freeDrawingBrush.color = hexToRgba(state.primaryColor, 0.4); } else { canvas.freeDrawingBrush.color = state.primaryColor; } const obj = canvas.getActiveObject(); if (obj) { if (obj.type === 'i-text') obj.set('fill', state.primaryColor); else obj.set('stroke', state.primaryColor); canvas.requestRenderAll(); } };
+        document.getElementById('primary-color').oninput = (e) => { state.primaryColor = e.target.value; if (state.tool === 'highlight') { canvas.freeDrawingBrush.color = hexToRgba(state.primaryColor, 0.4); } else { canvas.freeDrawingBrush.color = state.primaryColor; } const obj = canvas.getActiveObject(); if (obj) { if (obj.type === 'i-text') obj.set('fill', state.primaryColor); else obj.set('stroke', state.primaryColor); canvas.requestRenderAll(); } updateFontPreview(); };
         document.getElementById('stroke-width').oninput = (e) => { state.strokeWidth = parseInt(e.target.value); if (state.tool === 'highlight') { canvas.freeDrawingBrush.width = state.strokeWidth * 5; } else { canvas.freeDrawingBrush.width = state.strokeWidth * 2; } const obj = canvas.getActiveObject(); if (obj && obj.type !== 'i-text') { obj.set('strokeWidth', state.strokeWidth); canvas.requestRenderAll(); } };
         document.getElementById('fill-color').oninput = (e) => { state.fillColor = e.target.value; state.isFillTransparent = false; document.getElementById('fill-transparent').checked = false; const obj = canvas.getActiveObject(); if (obj && (obj.type === 'rect' || obj.type === 'ellipse')) { obj.set('fill', state.fillColor); canvas.requestRenderAll(); } };
         document.getElementById('fill-transparent').onchange = (e) => { state.isFillTransparent = e.target.checked; const obj = canvas.getActiveObject(); if (obj && (obj.type === 'rect' || obj.type === 'ellipse')) { obj.set('fill', state.isFillTransparent ? 'transparent' : state.fillColor); canvas.requestRenderAll(); } };
-        document.getElementById('font-family').onchange = (e) => { state.fontFamily = e.target.value; const obj = canvas.getActiveObject(); if (obj && obj.type === 'i-text') { obj.set('fontFamily', state.fontFamily); canvas.requestRenderAll(); } };
-        document.getElementById('font-size').oninput = (e) => { state.fontSize = parseInt(e.target.value); const obj = canvas.getActiveObject(); if (obj && obj.type === 'i-text') { obj.set('fontSize', state.fontSize); canvas.requestRenderAll(); } };
+        document.getElementById('font-family').onchange = (e) => { state.fontFamily = e.target.value; const obj = canvas.getActiveObject(); if (obj && obj.type === 'i-text') { obj.set('fontFamily', state.fontFamily); canvas.requestRenderAll(); } updateFontPreview(); };
+        document.getElementById('font-size').oninput = (e) => { state.fontSize = parseInt(e.target.value); document.getElementById('font-size-slider').value = state.fontSize; const obj = canvas.getActiveObject(); if (obj && obj.type === 'i-text') { obj.set('fontSize', state.fontSize); canvas.requestRenderAll(); } updateFontPreview(); };
+        document.getElementById('font-size-slider').oninput = (e) => { document.getElementById('font-size').value = e.target.value; state.fontSize = parseInt(e.target.value); const obj = canvas.getActiveObject(); if (obj && obj.type === 'i-text') { obj.set('fontSize', state.fontSize); canvas.requestRenderAll(); } updateFontPreview(); };
 
         canvas.on('selection:created', updateStyleBar); canvas.on('selection:updated', updateStyleBar); canvas.on('selection:cleared', updateStyleBar);
 
-        function toggleMenu() { const menu = document.getElementById('main-menu'); menu.style.display = menu.style.display === 'flex' ? 'none' : 'flex'; }
+        function toggleMenu() {
+            const menu = document.getElementById('main-menu');
+            if (menu.style.display === 'flex') { menu.style.display = 'none'; return; }
+            const rect = document.getElementById('btn-menu').getBoundingClientRect();
+            menu.style.right = Math.max(8, window.innerWidth - rect.right) + 'px';
+            if (rect.top > window.innerHeight / 2) { menu.style.top = 'auto'; menu.style.bottom = (window.innerHeight - rect.top + 8) + 'px'; }
+            else { menu.style.bottom = 'auto'; menu.style.top = (rect.bottom + 8) + 'px'; }
+            menu.style.display = 'flex';
+        }
         function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
         function openClearModal() { document.getElementById('clear-modal').style.display = 'flex'; document.getElementById('main-menu').style.display = 'none'; }
         function clearAll() { canvas.getObjects().forEach(o => canvas.remove(o)); closeModals(); saveHistory(); updateStyleBar(); }
@@ -425,7 +508,10 @@
         let savedSignatures = JSON.parse(localStorage.getItem('userSignatures')) || [];
         const sigCanvas = document.getElementById('sig-canvas'); const sigCtx = sigCanvas.getContext('2d'); let isSigning = false;
         sigCtx.lineWidth = 3; sigCtx.lineCap = 'round'; sigCtx.strokeStyle = '#000';
-        sigCanvas.onmousedown = (e) => { isSigning = true; sigCtx.beginPath(); sigCtx.moveTo(e.offsetX, e.offsetY); }; sigCanvas.onmousemove = (e) => { if (isSigning) { sigCtx.lineTo(e.offsetX, e.offsetY); sigCtx.stroke(); }}; sigCanvas.onmouseup = () => isSigning = false; sigCanvas.onmouseout = () => isSigning = false;
+        function sigPos(e) { const r = sigCanvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * (sigCanvas.width / r.width), y: (e.clientY - r.top) * (sigCanvas.height / r.height) }; }
+        sigCanvas.addEventListener('pointerdown', (e) => { e.preventDefault(); isSigning = true; sigCanvas.setPointerCapture(e.pointerId); const p = sigPos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); });
+        sigCanvas.addEventListener('pointermove', (e) => { if (!isSigning) return; e.preventDefault(); const p = sigPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); });
+        ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => sigCanvas.addEventListener(evt, () => isSigning = false));
         function openSignatureManager() { closeModals(); if (savedSignatures.length === 0) openDrawSignature(); else { renderSignatureList(); document.getElementById('sig-list-modal').style.display = 'flex'; } }
         function renderSignatureList() { const container = document.getElementById('sig-list-container'); container.innerHTML = ''; savedSignatures.forEach((sig, index) => { const wrapper = document.createElement('div'); wrapper.className = 'sig-item'; const img = document.createElement('img'); img.src = sig; wrapper.onclick = () => useSignature(index); const delBtn = document.createElement('button'); delBtn.className = 'btn-delete-sig'; delBtn.innerHTML = '<i class="ph ph-trash"></i>'; delBtn.onclick = (e) => { e.stopPropagation(); deleteSignature(index); }; wrapper.appendChild(img); wrapper.appendChild(delBtn); container.appendChild(wrapper); }); }
         function openDrawSignature() { closeModals(); sigCtx.clearRect(0,0,350,150); document.getElementById('sig-draw-modal').style.display = 'flex'; }
@@ -468,12 +554,45 @@
                 let arrow = new fabric.Path(pathStr, { stroke: state.primaryColor, strokeWidth: state.strokeWidth * 1.5, fill: '', strokeLineCap: 'round', strokeLineJoin: 'round', selectable: true, hoverCursor: 'move' }); canvas.add(arrow);
             } else if (tempBox) { tempBox.setCoords(); tempBox.set({ selectable: true, hoverCursor: 'move' }); } tempBox = null;
         });
-        canvas.on('object:scaling', function(e) { if (e.target && e.target.type === 'i-text') { e.target.set({ fontSize: e.target.fontSize * e.target.scaleX, scaleX: 1, scaleY: 1 }); if (canvas.getActiveObject() === e.target) document.getElementById('font-size').value = Math.round(e.target.fontSize); } });
+        canvas.on('object:scaling', function(e) { if (e.target && e.target.type === 'i-text') { e.target.set({ fontSize: e.target.fontSize * e.target.scaleX, scaleX: 1, scaleY: 1 }); if (canvas.getActiveObject() === e.target) { document.getElementById('font-size').value = Math.round(e.target.fontSize); document.getElementById('font-size-slider').value = Math.round(e.target.fontSize); updateFontPreview(); } } });
 
         const snapZone = 10; let guideLines = [];
         canvas.on('object:moving', function(e) { const obj = e.target; const center = canvas.getVpCenter(); guideLines.forEach(l => canvas.remove(l)); guideLines = []; if (Math.abs(obj.top - center.y) < snapZone) { obj.set({ top: center.y }); const line = new fabric.Line([-9999, center.y, 9999, center.y], { stroke: '#7c3aed', strokeWidth: 1/canvas.getZoom(), strokeDashArray: [5,5], selectable: false, evented: false }); canvas.add(line); guideLines.push(line); } if (Math.abs(obj.left - center.x) < snapZone) { obj.set({ left: center.x }); const line = new fabric.Line([center.x, -9999, center.x, 9999], { stroke: '#7c3aed', strokeWidth: 1/canvas.getZoom(), strokeDashArray: [5,5], selectable: false, evented: false }); canvas.add(line); guideLines.push(line); } });
         canvas.on('mouse:up', function() { guideLines.forEach(l => canvas.remove(l)); guideLines = []; });
-        canvas.on('mouse:wheel', function(opt) { const e = opt.e; e.preventDefault(); e.stopPropagation(); if (e.ctrlKey) { let zoom = canvas.getZoom() * (0.995 ** e.deltaY); if (zoom > 5) zoom = 5; if (zoom < 0.2) zoom = 0.2; canvas.zoomToPoint({ x: e.offsetX, y: e.offsetY }, zoom); } else { canvas.viewportTransform[4] -= e.deltaX; canvas.viewportTransform[5] -= e.deltaY; canvas.requestRenderAll(); } });
+        canvas.on('mouse:wheel', function(opt) { const e = opt.e; e.preventDefault(); e.stopPropagation(); if (e.ctrlKey) { let zoom = canvas.getZoom() * (0.995 ** e.deltaY); if (zoom > 5) zoom = 5; if (zoom < 0.2) zoom = 0.2; canvas.zoomToPoint({ x: e.offsetX, y: e.offsetY }, zoom); updateFontPreview(); } else { canvas.viewportTransform[4] -= e.deltaX; canvas.viewportTransform[5] -= e.deltaY; canvas.requestRenderAll(); } });
+
+        // --- GESTES TACTILES (pincer pour zoomer, 2 doigts pour déplacer) ---
+        let pinchDist = null, pinchMid = null;
+        function touchInfo(e) {
+            const r = canvas.upperCanvasEl.getBoundingClientRect();
+            const t1 = e.touches[0], t2 = e.touches[1];
+            return {
+                dist: Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY),
+                mid: { x: (t1.clientX + t2.clientX) / 2 - r.left, y: (t1.clientY + t2.clientY) / 2 - r.top }
+            };
+        }
+        canvas.upperCanvasEl.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                e.preventDefault();
+                if (isDown && tempBox) { canvas.remove(tempBox); tempBox = null; isDown = false; }
+                const info = touchInfo(e); pinchDist = info.dist; pinchMid = info.mid;
+            }
+        }, { passive: false });
+        canvas.upperCanvasEl.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2 && pinchDist) {
+                e.preventDefault();
+                const info = touchInfo(e);
+                let zoom = canvas.getZoom() * (info.dist / pinchDist);
+                if (zoom > 5) zoom = 5; if (zoom < 0.2) zoom = 0.2;
+                canvas.zoomToPoint(new fabric.Point(info.mid.x, info.mid.y), zoom);
+                canvas.viewportTransform[4] += info.mid.x - pinchMid.x;
+                canvas.viewportTransform[5] += info.mid.y - pinchMid.y;
+                canvas.requestRenderAll();
+                pinchDist = info.dist; pinchMid = info.mid;
+                updateFontPreview();
+            }
+        }, { passive: false });
+        ['touchend', 'touchcancel'].forEach(evt => canvas.upperCanvasEl.addEventListener(evt, (e) => { if (e.touches.length < 2) { pinchDist = null; pinchMid = null; } }));
 
         function setTool(t) {
             state.tool = t; document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active')); document.querySelector(`[data-tool="${t}"]`).classList.add('active');
@@ -487,7 +606,7 @@
         function updateHistoryButtons() { document.getElementById('btn-undo').disabled = historyIndex <= 0; document.getElementById('btn-redo').disabled = historyIndex >= history.length - 1; }
         function saveHistory() { if (isHistoryAction) return; history = history.slice(0, historyIndex + 1); history.push(canvas.getObjects().map(o => o.toObject(['selectable', 'lockUniScaling', 'hoverCursor']))); historyIndex++; updateHistoryButtons(); }
         canvas.on('object:added', saveHistory); canvas.on('object:modified', saveHistory);
-        function loadHistory(i) { isHistoryAction = true; canvas.getObjects().forEach(o => canvas.remove(o)); fabric.util.enlivenseObjects(history[i], (objs) => { objs.forEach(o => canvas.add(o)); canvas.renderAll(); isHistoryAction = false; updateHistoryButtons(); }); }
+        function loadHistory(i) { isHistoryAction = true; canvas.getObjects().forEach(o => canvas.remove(o)); fabric.util.enlivenObjects(history[i], (objs) => { objs.forEach(o => canvas.add(o)); canvas.renderAll(); isHistoryAction = false; updateHistoryButtons(); }); }
         function undo() { if (historyIndex > 0) loadHistory(--historyIndex); }
         function redo() { if (historyIndex < history.length - 1) loadHistory(++historyIndex); }
         window.addEventListener('keydown', (e) => { const isCtrl = e.metaKey || e.ctrlKey; if (e.target.tagName === 'INPUT' || (canvas.getActiveObject() && canvas.getActiveObject().isEditing)) return; if (isCtrl && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; } if (e.key === 'Delete' || e.key === 'Backspace') { if (canvas.getActiveObject()) { e.preventDefault(); canvas.remove(...canvas.getActiveObjects()); canvas.discardActiveObject(); saveHistory(); updateStyleBar(); } } });
