@@ -70,6 +70,13 @@
         .pm-btn-add { border: 2px dashed #9ca3af; border-radius: 8px; height: 150px; width: 105px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; color: #6b7280; font-weight: bold; gap: 8px; flex-shrink: 0; background: transparent; transition: 0.2s;}
         .pm-btn-add:hover { background: #f3f4f6; color: var(--active-icon); border-color: var(--active-icon); }
 
+        /* --- BIBLIOTHÈQUE D'IMAGES --- */
+        .il-thumb { position: relative; cursor: grab; flex-shrink: 0; }
+        .il-thumb:active { cursor: grabbing; }
+        .il-thumb img { max-height: 110px; max-width: 160px; border: 2px solid transparent; border-radius: 6px; background: white; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: block; transition: 0.2s; }
+        .il-thumb:hover img { border-color: var(--active-icon); }
+        .il-btn-add { height: 110px; width: 90px; }
+
         .drag-handle { color: #9ca3af; cursor: grab; padding: 0 8px; font-size: 1.2rem; }
         .tool-group { display: flex; gap: 4px; align-items: center; position: relative; }
         .tool-btn { background: transparent; border: none; color: var(--icon-color); width: 38px; height: 38px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: 0.2s; }
@@ -155,8 +162,8 @@
             <button class="tool-btn" data-tool="rect" title="Rectangle"><i class="ph ph-square"></i></button>
             <button class="tool-btn" data-tool="circle" title="Cercle"><i class="ph ph-circle"></i></button>
             <button class="tool-btn" data-tool="check" title="Check"><i class="ph ph-check"></i></button>
-            <button class="tool-btn" onclick="document.getElementById('image-upload').click()" title="Ajouter image"><i class="ph ph-image"></i></button>
-            <input type="file" id="image-upload" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
+            <button class="tool-btn" onclick="toggleImageLibrary()" title="Images"><i class="ph ph-image"></i></button>
+            <input type="file" id="image-upload" accept="image/*" multiple style="display:none" onchange="handleImageUpload(event)">
             <button class="tool-btn" onclick="openSignatureManager()" title="Signature"><i class="ph ph-signature"></i></button>
         </div>
         <div class="divider-v"></div>
@@ -199,6 +206,15 @@
         </div>
         <div id="pm-thumbnails" class="pm-thumbnails">
             </div>
+    </div>
+
+    <div id="image-library" class="page-manager hidden">
+        <div class="pm-header">
+            <span>Vos images — glissez-les sur le document (ou touchez pour placer au centre)</span>
+            <button onclick="toggleImageLibrary()"><i class="ph ph-x"></i></button>
+        </div>
+        <div id="il-thumbnails" class="pm-thumbnails">
+        </div>
     </div>
 
     <div id="newdoc-modal" class="modal-overlay"><div class="modal"><h3>Nouveau document ?</h3><p>Le document en cours et ses annotations seront remplacés par une page vierge.</p><div class="modal-actions"><button class="btn-cancel" onclick="closeModals()">Annuler</button><button class="btn-confirm" onclick="confirmNewDocument()">Nouveau document</button></div></div></div>
@@ -430,7 +446,8 @@
             const pm = document.getElementById('page-manager');
             isPageManagerOpen = !isPageManagerOpen;
             if (isPageManagerOpen) {
-                saveCurrentPageData(); 
+                if (isImageLibraryOpen) toggleImageLibrary();
+                saveCurrentPageData();
                 pm.classList.remove('hidden');
                 await renderThumbnails();
             } else {
@@ -548,8 +565,50 @@
         function saveProject() { saveCurrentPageData(); const projectData = { pdfBase64: arrayBufferToBase64(pdfBytesOriginal), pagesData: pagesData, currentPageNum: currentPageNum }; const blob = new Blob([JSON.stringify(projectData)], {type: "application/json"}); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'projet_editeur.json'; link.click(); document.getElementById('main-menu').style.display = 'none'; }
         function loadProject(jsonString) { const projectData = JSON.parse(jsonString); pagesData = projectData.pagesData; currentPageNum = projectData.currentPageNum || 1; const buffer = base64ToArrayBuffer(projectData.pdfBase64); loadPDFFromBuffer(buffer, true); document.getElementById('main-menu').style.display = 'none'; }
         function handleProjectUpload(e) { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (evt) => loadProject(evt.target.result); reader.readAsText(file); }
-        function addImageToCanvas(dataUrl) { fabric.Image.fromURL(dataUrl, (img) => { const maxDim = 300; let scale = 1; if (img.width > maxDim || img.height > maxDim) scale = Math.min(maxDim / img.width, maxDim / img.height); const center = canvas.getVpCenter(); img.set({ left: center.x, top: center.y, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale, hoverCursor: 'move' }); canvas.add(img); canvas.setActiveObject(img); setTool('select'); saveHistory(); }); }
-        function handleImageUpload(e) { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (f) => addImageToCanvas(f.target.result); reader.readAsDataURL(file); }
+        function addImageToCanvas(dataUrl, pos) { fabric.Image.fromURL(dataUrl, (img) => { const maxDim = 300; let scale = 1; if (img.width > maxDim || img.height > maxDim) scale = Math.min(maxDim / img.width, maxDim / img.height); const p = pos || canvas.getVpCenter(); img.set({ left: p.x, top: p.y, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale, hoverCursor: 'move' }); canvas.add(img); canvas.setActiveObject(img); setTool('select'); saveHistory(); }); }
+        function handleImageUpload(e) { Array.from(e.target.files).forEach(file => { const reader = new FileReader(); reader.onload = (f) => { addToImageLibrary(f.target.result); addImageToCanvas(f.target.result); }; reader.readAsDataURL(file); }); e.target.value = ''; }
+
+        // --- BIBLIOTHÈQUE D'IMAGES ---
+        let imageLibrary = [];
+        idbGet('imageLibrary').then(v => { imageLibrary = v || []; }).catch(() => {});
+        function persistImageLibrary() { idbSet('imageLibrary', imageLibrary).catch(() => {}); }
+        function addToImageLibrary(dataUrl) { if (!imageLibrary.includes(dataUrl)) { imageLibrary.push(dataUrl); persistImageLibrary(); renderImageLibrary(); } }
+        function deleteLibraryImage(index) { imageLibrary.splice(index, 1); persistImageLibrary(); renderImageLibrary(); }
+
+        let isImageLibraryOpen = false;
+        function toggleImageLibrary() {
+            const panel = document.getElementById('image-library');
+            isImageLibraryOpen = !isImageLibraryOpen;
+            if (isImageLibraryOpen) {
+                if (isPageManagerOpen) togglePageManager();
+                renderImageLibrary();
+                panel.classList.remove('hidden');
+            } else { panel.classList.add('hidden'); }
+        }
+
+        function renderImageLibrary() {
+            const container = document.getElementById('il-thumbnails');
+            container.innerHTML = '';
+            imageLibrary.forEach((src, index) => {
+                const wrapper = document.createElement('div'); wrapper.className = 'il-thumb'; wrapper.draggable = true;
+                wrapper.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-image-lib', String(index)); });
+                wrapper.onclick = () => addImageToCanvas(imageLibrary[index]);
+                const img = document.createElement('img'); img.src = src; img.draggable = false;
+                const delBtn = document.createElement('button'); delBtn.className = 'pm-btn-delete'; delBtn.title = 'Retirer de la bibliothèque';
+                delBtn.innerHTML = '<i class="ph ph-trash"></i>';
+                delBtn.onclick = (e) => { e.stopPropagation(); deleteLibraryImage(index); };
+                wrapper.appendChild(img); wrapper.appendChild(delBtn); container.appendChild(wrapper);
+            });
+            const add = document.createElement('div'); add.className = 'pm-btn-add il-btn-add';
+            add.innerHTML = '<i class="ph ph-plus-circle" style="font-size: 2rem;"></i><span style="font-size:0.8rem; text-align:center;">Ajouter</span>';
+            add.onclick = () => document.getElementById('image-upload').click();
+            container.appendChild(add);
+        }
+
+        function clientToCanvasPoint(clientX, clientY) {
+            const rect = canvas.upperCanvasEl.getBoundingClientRect();
+            return fabric.util.transformPoint(new fabric.Point(clientX - rect.left, clientY - rect.top), fabric.util.invertTransform(canvas.viewportTransform));
+        }
 
         window.addEventListener('dragover', (e) => { 
             e.preventDefault(); 
@@ -558,9 +617,11 @@
         window.addEventListener('dragleave', (e) => { e.preventDefault(); document.body.classList.remove('drag-over'); });
         window.addEventListener('drop', (e) => {
             e.preventDefault(); document.body.classList.remove('drag-over');
+            const libIndex = e.dataTransfer.getData('application/x-image-lib');
+            if (libIndex !== '') { const src = imageLibrary[parseInt(libIndex)]; if (src) addImageToCanvas(src, clientToCanvasPoint(e.clientX, e.clientY)); return; }
             const file = e.dataTransfer.files[0]; if (!file) return;
-            if (file.type.startsWith('image/')) { const r = new FileReader(); r.onload = (f) => addImageToCanvas(f.target.result); r.readAsDataURL(file); } 
-            else if (file.type === 'application/pdf') { const r = new FileReader(); r.onload = (f) => loadPDFFromBuffer(f.target.result); r.readAsArrayBuffer(file); } 
+            if (file.type.startsWith('image/')) { const dropPos = clientToCanvasPoint(e.clientX, e.clientY); const r = new FileReader(); r.onload = (f) => { addToImageLibrary(f.target.result); addImageToCanvas(f.target.result, dropPos); }; r.readAsDataURL(file); }
+            else if (file.type === 'application/pdf') { const r = new FileReader(); r.onload = (f) => loadPDFFromBuffer(f.target.result); r.readAsArrayBuffer(file); }
             else if (file.name.endsWith('.json')) { const r = new FileReader(); r.onload = (f) => loadProject(f.target.result); r.readAsText(file); }
         });
 
