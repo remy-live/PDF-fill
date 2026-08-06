@@ -1,4 +1,4 @@
-const CACHE = 'pdf-editor-v1';
+const CACHE = 'pdf-editor-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -28,13 +28,32 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+function cachePut(request, response) {
+  const copy = response.clone();
+  caches.open(CACHE).then((c) => c.put(request, copy));
+}
+
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
+
+  // La page elle-même part du réseau : sinon une nouvelle version mise en ligne
+  // resterait invisible derrière le cache. Le cache ne sert que hors connexion.
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request)
+        .then((res) => { if (res.ok) cachePut(e.request, res); return res; })
+        .catch(() => caches.match(e.request, { ignoreSearch: true })
+          .then((hit) => hit || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // Les bibliothèques et polices ne changent jamais de nom : le cache d'abord.
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then((hit) =>
       hit ||
       fetch(e.request).then((res) => {
-        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
+        if (res.ok) cachePut(e.request, res);
         return res;
       })
     )
