@@ -79,6 +79,9 @@
 
         .drag-handle { color: #9ca3af; cursor: grab; padding: 0 8px; font-size: 1.2rem; }
         .tool-group { display: flex; gap: 4px; align-items: center; position: relative; }
+        #toolbar-scroll { display: flex; align-items: center; gap: 8px; }
+        #toolbar-pinned { display: flex; align-items: center; gap: 6px; background: inherit; }
+        #btn-open { display: none; }
         .tool-btn { background: transparent; border: none; color: var(--icon-color); width: 38px; height: 38px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: 0.2s; }
         .tool-btn:hover:not(:disabled) { background: #f3f4f6; } .tool-btn.active { background: var(--active-bg); color: var(--active-icon); } .tool-btn:disabled { opacity: 0.3; cursor: not-allowed; }
         .divider-v { width: 1px; height: 24px; background: var(--divider); margin: 0 4px; }
@@ -112,9 +115,12 @@
             #main-toolbar {
                 left: 0 !important; right: 0 !important; top: auto !important; bottom: 0 !important;
                 border-radius: 16px 16px 0 0; max-width: 100vw; box-sizing: border-box;
-                overflow-x: auto; -webkit-overflow-scrolling: touch;
-                padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+                overflow: visible; gap: 4px;
+                padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
             }
+            /* Seuls les outils défilent ; ouvrir / exporter / menu restent toujours visibles */
+            #toolbar-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; min-width: 0; flex: 1; }
+            #toolbar-pinned { flex-shrink: 0; box-shadow: -8px 0 8px -4px rgba(255,255,255,0.9); }
             #main-toolbar > *, #style-bar > * { flex-shrink: 0; }
             #style-bar {
                 left: 8px !important; right: 8px !important; top: auto !important;
@@ -130,7 +136,51 @@
             .pm-btn-add { height: 110px; width: 78px; }
             .modal { width: min(400px, calc(100vw - 32px)); box-sizing: border-box; }
             #sig-canvas { max-width: 100%; }
+            #btn-open { display: flex; }
+            #guided-bar { bottom: calc(76px + env(safe-area-inset-bottom)); }
         }
+
+        /* --- ÉCRAN D'ACCUEIL (document vierge) --- */
+        #empty-state {
+            position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 14px; z-index: 80; padding: 24px; box-sizing: border-box; pointer-events: none;
+        }
+        #empty-state.hidden { display: none; }
+        #empty-state > * { pointer-events: auto; }
+        #empty-state h2 { margin: 0 0 4px; color: var(--text-color); font-size: 1.25rem; text-align: center; }
+        #empty-state p { margin: 0 0 12px; color: #6b7280; font-size: 0.9rem; text-align: center; max-width: 320px; }
+        .es-btn {
+            display: flex; align-items: center; gap: 10px; width: min(320px, 100%); box-sizing: border-box;
+            padding: 16px 20px; border-radius: 14px; border: none; cursor: pointer;
+            font-size: 1rem; font-weight: 600; background: white; color: var(--text-color);
+            box-shadow: var(--shadow); transition: 0.15s;
+        }
+        .es-btn i { font-size: 1.4rem; color: var(--active-icon); }
+        .es-btn:hover { transform: translateY(-1px); }
+        .es-btn.primary { background: var(--active-icon); color: white; }
+        .es-btn.primary i { color: white; }
+
+        /* --- REMPLISSAGE GUIDÉ DES FORMULAIRES --- */
+        #guided-bar {
+            position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
+            display: none; align-items: center; gap: 10px; z-index: 150;
+            background: var(--bg-panel); backdrop-filter: blur(10px); border-radius: 100px;
+            box-shadow: var(--shadow); padding: 8px 10px; max-width: calc(100vw - 16px); box-sizing: border-box;
+        }
+        #guided-bar.visible { display: flex; }
+        #guided-progress { font-size: 0.85rem; font-weight: 600; color: var(--text-color); white-space: nowrap; padding: 0 4px; }
+        #guided-bar .btn-next { background: var(--active-icon); color: white; border: none; border-radius: 100px; padding: 10px 18px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.95rem; }
+        #guided-bar .btn-next:disabled { opacity: 0.4; }
+
+        #fill-prompt {
+            position: fixed; top: 82px; left: 50%; transform: translateX(-50%);
+            display: none; align-items: center; gap: 8px; z-index: 140;
+            background: var(--active-icon); color: white; border-radius: 100px;
+            padding: 9px 16px; box-shadow: var(--shadow); cursor: pointer;
+            font-size: 0.85rem; font-weight: 600; white-space: nowrap; max-width: calc(100vw - 16px);
+            box-sizing: border-box; overflow: hidden; text-overflow: ellipsis;
+        }
+        #fill-prompt.visible { display: flex; }
     </style>
 </head>
 <body>
@@ -144,8 +194,29 @@
 
     <div id="toast"></div>
 
+    <div id="empty-state" class="hidden">
+        <h2>Éditeur PDF</h2>
+        <p>Ouvrez un document pour le remplir, l'annoter et le signer.</p>
+        <button class="es-btn primary" onclick="document.getElementById('file-upload').click()"><i class="ph ph-file-pdf"></i> Ouvrir un PDF</button>
+        <button class="es-btn" onclick="document.getElementById('photo-upload').click()"><i class="ph ph-camera"></i> Photographier un document</button>
+        <button class="es-btn" onclick="hideEmptyState()"><i class="ph ph-note-pencil"></i> Partir d'une page vierge</button>
+        <input type="file" id="photo-upload" accept="image/*" capture="environment" style="display:none" onchange="handlePhotoDocument(event)">
+    </div>
+
+    <div id="fill-prompt" onclick="startGuidedFill()">
+        <i class="ph ph-magic-wand"></i> <span id="fill-prompt-text">Formulaire détecté — Remplir</span>
+    </div>
+
+    <div id="guided-bar">
+        <button class="tool-btn" id="guided-prev" onclick="guidedGo(-1)" title="Champ précédent"><i class="ph ph-caret-left"></i></button>
+        <span id="guided-progress">Champ 1 / 1</span>
+        <button class="btn-next" id="guided-next" onclick="guidedGo(1)">Suivant <i class="ph ph-caret-right"></i></button>
+        <button class="tool-btn" onclick="stopGuidedFill()" title="Terminer"><i class="ph ph-x"></i></button>
+    </div>
+
     <div id="main-toolbar" class="toolbar">
         <div id="drag-handle-main" class="drag-handle"><i class="ph ph-dots-six-vertical"></i></div>
+        <div id="toolbar-scroll">
         <div class="tool-group">
             <button class="tool-btn" id="btn-undo" onclick="undo()" disabled><i class="ph ph-arrow-u-up-left"></i></button>
             <button class="tool-btn" id="btn-redo" onclick="redo()" disabled><i class="ph ph-arrow-u-up-right"></i></button>
@@ -166,9 +237,11 @@
             <input type="file" id="image-upload" accept="image/*" multiple style="display:none" onchange="handleImageUpload(event)">
             <button class="tool-btn" onclick="openSignatureManager()" title="Signature"><i class="ph ph-signature"></i></button>
         </div>
-        <div class="divider-v"></div>
-        <button id="export-btn" class="btn-export" onclick="exportPdf()"><i class="ph ph-download-simple"></i> <span class="btn-label">Exporter PDF</span></button>
-        <div class="tool-group">
+        </div>
+        <div id="toolbar-pinned">
+            <div class="divider-v"></div>
+            <button id="btn-open" class="tool-btn" onclick="document.getElementById('file-upload').click()" title="Ouvrir un PDF"><i class="ph ph-folder-open"></i></button>
+            <button id="export-btn" class="btn-export" onclick="exportPdf()"><i class="ph ph-download-simple"></i> <span class="btn-label">Exporter PDF</span></button>
             <button class="tool-btn" id="btn-menu" onclick="toggleMenu()"><i class="ph ph-list"></i></button>
         </div>
     </div>
@@ -244,6 +317,13 @@
         const state = { tool: 'select', primaryColor: '#1e1e1e', fillColor: '#ffffff', isFillTransparent: true, strokeWidth: 3, fontSize: 16, fontFamily: 'Helvetica', lastSymbolSize: 20, showFields: true };
         const canvas = new fabric.Canvas('pdf-editor', { width: window.innerWidth, height: window.innerHeight, selection: true });
 
+        // Poignées de sélection plus grandes au doigt
+        if (window.matchMedia('(pointer: coarse)').matches) {
+            fabric.Object.prototype.cornerSize = 20;
+            fabric.Object.prototype.touchCornerSize = 32;
+            fabric.Object.prototype.padding = 6;
+        }
+
         function fitPageToScreen() {
             const bg = canvas.backgroundImage; if (!bg) return;
             const marginX = 40, marginTop = isMobileLayout() ? 70 : 100, marginBottom = isMobileLayout() ? 170 : 100;
@@ -260,6 +340,21 @@
             canvas.setWidth(window.innerWidth); canvas.setHeight(window.innerHeight);
             clearTimeout(resizeTimer); resizeTimer = setTimeout(fitPageToScreen, 150);
         });
+
+        // Clavier virtuel ouvert : on remonte le champ en cours d'édition au-dessus du clavier
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', () => {
+                const obj = canvas.getActiveObject();
+                if (!obj || !obj.isEditing) return;
+                const visibleBottom = window.visualViewport.height - 90;
+                const objBottom = fabric.util.transformPoint(
+                    new fabric.Point(obj.left, obj.top + obj.height), canvas.viewportTransform).y;
+                if (objBottom > visibleBottom) {
+                    canvas.viewportTransform[5] -= (objBottom - visibleBottom);
+                    canvas.requestRenderAll();
+                }
+            });
+        }
 
         let pdfBytesOriginal = null;
         let pdfDoc = null;
@@ -305,7 +400,42 @@
             if(totalPages > 0) paginationBar.classList.remove('hidden');
             if(totalPages > 0) await renderPage(currentPageNum);
             else canvas.clear();
+            scanAllFormFields();
             scheduleAutosave();
+        }
+
+        // --- ÉCRAN D'ACCUEIL ---
+        function showEmptyState() { document.getElementById('empty-state').classList.remove('hidden'); }
+        function hideEmptyState() { document.getElementById('empty-state').classList.add('hidden'); }
+
+        // Photo prise au téléphone : on en fait une page PDF pleine largeur
+        function handlePhotoDocument(e) {
+            const file = e.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (f) => {
+                document.getElementById('loading-text').innerText = 'Création du document...';
+                document.getElementById('loading-overlay').style.display = 'flex';
+                try {
+                    const img = new Image();
+                    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = f.target.result; });
+                    const doc = await PDFLib.PDFDocument.create();
+                    const bytes = base64ToArrayBuffer(f.target.result.split(',')[1]);
+                    const embedded = /^data:image\/png/.test(f.target.result)
+                        ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+                    const pageW = 595.28, pageH = pageW * (img.height / img.width);
+                    const page = doc.addPage([pageW, pageH]);
+                    page.drawImage(embedded, { x: 0, y: 0, width: pageW, height: pageH });
+                    pagesData = {}; currentPageNum = 1;
+                    await loadPDFFromBuffer(await doc.save());
+                    hideEmptyState();
+                } catch (err) {
+                    console.error(err);
+                    showToast("Cette image n'a pas pu être convertie (formats acceptés : JPEG, PNG)");
+                }
+                document.getElementById('loading-overlay').style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+            e.target.value = '';
         }
 
         async function renderPage(pageNum) {
@@ -360,7 +490,128 @@
                 canvas.add(hint);
             });
             canvas.requestRenderAll();
-            if (!fieldsToastShown && state.showFields) { fieldsToastShown = true; showToast('Champs de formulaire détectés : touchez une zone en pointillés pour la remplir'); }
+            fieldsToastShown = true;
+        }
+
+        // Recense les champs de toutes les pages pour proposer le remplissage guidé
+        let fieldCountByPage = {}, totalFieldCount = 0;
+        async function scanAllFormFields() {
+            fieldCountByPage = {}; totalFieldCount = 0;
+            for (let i = 1; i <= totalPages; i++) {
+                try {
+                    const page = await pdfDoc.getPage(i);
+                    const n = (await page.getAnnotations()).filter(a => a.subtype === 'Widget' && (a.fieldType === 'Tx' || (a.fieldType === 'Btn' && a.checkBox))).length;
+                    if (n) { fieldCountByPage[i] = n; totalFieldCount += n; }
+                } catch (e) {}
+            }
+            showFillPrompt(`${totalFieldCount} champ${totalFieldCount > 1 ? 's' : ''} détecté${totalFieldCount > 1 ? 's' : ''} — Remplir`);
+        }
+
+        function showFillPrompt(label) {
+            const prompt = document.getElementById('fill-prompt');
+            if (totalFieldCount > 0 && !guided.active) {
+                document.getElementById('fill-prompt-text').innerText = label;
+                prompt.classList.add('visible');
+            } else {
+                prompt.classList.remove('visible');
+            }
+        }
+
+        // --- REMPLISSAGE GUIDÉ ---
+        const guided = { active: false, index: 0 };
+
+        function guidedHints() {
+            return canvas.getObjects().filter(o => o.isFieldHint)
+                .sort((a, b) => (a.top - b.top) || (a.left - b.left));
+        }
+        function guidedPagesWithFields() { return Object.keys(fieldCountByPage).map(Number).sort((a, b) => a - b); }
+
+        async function startGuidedFill() {
+            if (!totalFieldCount) return;
+            guided.active = true;
+            document.getElementById('fill-prompt').classList.remove('visible');
+            document.getElementById('guided-bar').classList.add('visible');
+            setTool('select');
+            const pages = guidedPagesWithFields();
+            if (!fieldCountByPage[currentPageNum] && pages.length) {
+                saveCurrentPageData(); currentPageNum = pages[0]; await renderPage(currentPageNum);
+            }
+            guided.index = 0;
+            focusGuidedField();
+        }
+
+        function stopGuidedFill() {
+            guided.active = false;
+            document.getElementById('guided-bar').classList.remove('visible');
+            const obj = canvas.getActiveObject();
+            if (obj && obj.isEditing) obj.exitEditing();
+            canvas.discardActiveObject(); canvas.requestRenderAll();
+            fitPageToScreen();
+            canvas.getObjects().forEach(o => { if (o.isFieldHint) o.set({ stroke: '#7c3aed', strokeWidth: 1 }); });
+            canvas.requestRenderAll();
+            const left = remainingFieldCount();
+            if (left > 0) showFillPrompt(`${left} champ${left > 1 ? 's' : ''} restant${left > 1 ? 's' : ''} — Reprendre`);
+            else { document.getElementById('fill-prompt').classList.remove('visible'); showToast('Formulaire complété'); }
+        }
+
+        function remainingFieldCount() { return guidedHints().filter(h => h.visible !== false).length; }
+
+        function focusGuidedField() {
+            const hints = guidedHints();
+            if (!hints.length) return;
+            guided.index = Math.max(0, Math.min(guided.index, hints.length - 1));
+            const hint = hints[guided.index];
+
+            // Largeur de page entière : le libellé à gauche du champ doit rester lisible,
+            // c'est lui qui indique quoi saisir. Seul le défilement vertical suit le champ.
+            const bg = canvas.backgroundImage;
+            const targetZoom = bg ? Math.min(2.5, (window.innerWidth - 24) / bg.width) : canvas.getZoom();
+            canvas.setZoom(targetZoom);
+            const topBar = isMobileLayout() ? 70 : 110;
+            const bottomBar = isMobileLayout() ? 170 : 120;
+            const viewH = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+            const usableH = Math.max(120, viewH - topBar - bottomBar);
+            canvas.viewportTransform[4] = bg ? (window.innerWidth - bg.width * targetZoom) / 2
+                                             : window.innerWidth / 2 - (hint.left + hint.width / 2) * targetZoom;
+            canvas.viewportTransform[5] = topBar + usableH / 2 - (hint.top + hint.height / 2) * targetZoom;
+            canvas.requestRenderAll();
+
+            // Halo temporaire pour repérer le champ actif d'un coup d'œil
+            canvas.getObjects().forEach(o => { if (o.isFieldHint) o.set({ stroke: '#7c3aed', strokeWidth: 1 }); });
+            hint.set({ stroke: '#dc2626', strokeWidth: 2 });
+            canvas.requestRenderAll();
+
+            if (hint.visible !== false && hint.fieldKind === 'text') fillFieldHint(hint);
+            else if (hint.visible !== false) showToast('Touchez la case encadrée en rouge pour la cocher');
+
+            const pages = guidedPagesWithFields();
+            const pageIdx = pages.indexOf(currentPageNum);
+            const before = pages.slice(0, pageIdx).reduce((s, p) => s + fieldCountByPage[p], 0);
+            document.getElementById('guided-progress').innerText = `Champ ${before + guided.index + 1} / ${totalFieldCount}`;
+            document.getElementById('guided-prev').disabled = (guided.index === 0 && pageIdx <= 0);
+            const isLast = (guided.index >= hints.length - 1) && (pageIdx === pages.length - 1);
+            document.getElementById('guided-next').innerHTML = isLast
+                ? 'Terminer <i class="ph ph-check"></i>' : 'Suivant <i class="ph ph-caret-right"></i>';
+        }
+
+        async function guidedGo(step) {
+            const obj = canvas.getActiveObject();
+            if (obj && obj.isEditing) obj.exitEditing();
+            canvas.discardActiveObject();
+
+            const hints = guidedHints();
+            const next = guided.index + step;
+            if (next >= 0 && next < hints.length) { guided.index = next; focusGuidedField(); return; }
+
+            // Bord de page atteint : on passe à la page suivante (ou précédente) qui contient des champs
+            const pages = guidedPagesWithFields();
+            const pageIdx = pages.indexOf(currentPageNum);
+            const targetPage = pages[pageIdx + step];
+            if (targetPage === undefined) { stopGuidedFill(); return; }
+            saveCurrentPageData(); currentPageNum = targetPage;
+            await renderPage(currentPageNum);
+            guided.index = step > 0 ? 0 : Math.max(0, guidedHints().length - 1);
+            focusGuidedField();
         }
 
         function fillFieldHint(hint) {
@@ -423,7 +674,7 @@
             await loadPDFFromBuffer(await doc.save());
         }
         function openNewDocModal() { document.getElementById('newdoc-modal').style.display = 'flex'; document.getElementById('main-menu').style.display = 'none'; }
-        async function confirmNewDocument() { closeModals(); await idbDel('autosave'); pagesData = {}; currentPageNum = 1; await newBlankDocument(); showToast('Nouveau document créé'); }
+        async function confirmNewDocument() { closeModals(); await idbDel('autosave'); pagesData = {}; currentPageNum = 1; await newBlankDocument(); hideEmptyState(); showToast('Nouveau document créé'); }
 
         (async function init() {
             try {
@@ -436,6 +687,7 @@
                 }
             } catch (e) { console.warn(e); }
             await newBlankDocument();
+            showEmptyState();  // aucun document ouvert : on propose d'en importer un
         })();
 
 
@@ -561,9 +813,9 @@
         }
 
         // --- I/O ET UPLOADS ---
-        function handleFileUpload(e) { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (evt) => { loadPDFFromBuffer(evt.target.result); document.getElementById('main-menu').style.display = 'none'; }; reader.readAsArrayBuffer(file); }
+        function handleFileUpload(e) { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (evt) => { loadPDFFromBuffer(evt.target.result); hideEmptyState(); document.getElementById('main-menu').style.display = 'none'; }; reader.readAsArrayBuffer(file); e.target.value = ''; }
         function saveProject() { saveCurrentPageData(); const projectData = { pdfBase64: arrayBufferToBase64(pdfBytesOriginal), pagesData: pagesData, currentPageNum: currentPageNum }; const blob = new Blob([JSON.stringify(projectData)], {type: "application/json"}); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'projet_editeur.json'; link.click(); document.getElementById('main-menu').style.display = 'none'; }
-        function loadProject(jsonString) { const projectData = JSON.parse(jsonString); pagesData = projectData.pagesData; currentPageNum = projectData.currentPageNum || 1; const buffer = base64ToArrayBuffer(projectData.pdfBase64); loadPDFFromBuffer(buffer, true); document.getElementById('main-menu').style.display = 'none'; }
+        function loadProject(jsonString) { const projectData = JSON.parse(jsonString); pagesData = projectData.pagesData; currentPageNum = projectData.currentPageNum || 1; const buffer = base64ToArrayBuffer(projectData.pdfBase64); loadPDFFromBuffer(buffer, true); hideEmptyState(); document.getElementById('main-menu').style.display = 'none'; }
         function handleProjectUpload(e) { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (evt) => loadProject(evt.target.result); reader.readAsText(file); }
         function addImageToCanvas(dataUrl, pos) { fabric.Image.fromURL(dataUrl, (img) => { const maxDim = 300; let scale = 1; if (img.width > maxDim || img.height > maxDim) scale = Math.min(maxDim / img.width, maxDim / img.height); const p = pos || canvas.getVpCenter(); img.set({ left: p.x, top: p.y, originX: 'center', originY: 'center', scaleX: scale, scaleY: scale, hoverCursor: 'move' }); canvas.add(img); canvas.setActiveObject(img); setTool('select'); saveHistory(); }); }
         function handleImageUpload(e) { Array.from(e.target.files).forEach(file => { const reader = new FileReader(); reader.onload = (f) => { addToImageLibrary(f.target.result); addImageToCanvas(f.target.result); }; reader.readAsDataURL(file); }); e.target.value = ''; }
@@ -621,7 +873,7 @@
             if (libIndex !== '') { const src = imageLibrary[parseInt(libIndex)]; if (src) addImageToCanvas(src, clientToCanvasPoint(e.clientX, e.clientY)); return; }
             const file = e.dataTransfer.files[0]; if (!file) return;
             if (file.type.startsWith('image/')) { const dropPos = clientToCanvasPoint(e.clientX, e.clientY); const r = new FileReader(); r.onload = (f) => { addToImageLibrary(f.target.result); addImageToCanvas(f.target.result, dropPos); }; r.readAsDataURL(file); }
-            else if (file.type === 'application/pdf') { const r = new FileReader(); r.onload = (f) => loadPDFFromBuffer(f.target.result); r.readAsArrayBuffer(file); }
+            else if (file.type === 'application/pdf') { const r = new FileReader(); r.onload = (f) => { loadPDFFromBuffer(f.target.result); hideEmptyState(); }; r.readAsArrayBuffer(file); }
             else if (file.name.endsWith('.json')) { const r = new FileReader(); r.onload = (f) => loadProject(f.target.result); r.readAsText(file); }
         });
 
@@ -806,12 +1058,13 @@
             updateStyleBar();
         }
         function deleteSelection() { if (!canvas.getActiveObject()) return; canvas.remove(...canvas.getActiveObjects()); canvas.discardActiveObject(); saveHistory(); updateStyleBar(); }
-        document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.onclick = (e) => setTool(e.currentTarget.dataset.tool));
+        // Choisir un outil vaut intention de travailler sur la page : l'accueil s'efface
+        document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.onclick = (e) => { hideEmptyState(); setTool(e.currentTarget.dataset.tool); });
 
         let history = [], historyIndex = -1, isHistoryAction = false;
         function updateHistoryButtons() { document.getElementById('btn-undo').disabled = historyIndex <= 0; document.getElementById('btn-redo').disabled = historyIndex >= history.length - 1; }
         function saveHistory() { if (isHistoryAction) return; history = history.slice(0, historyIndex + 1); history.push(canvas.getObjects().filter(o => !o.isFieldHint).map(o => o.toObject(['selectable', 'lockUniScaling', 'hoverCursor']))); historyIndex++; updateHistoryButtons(); scheduleAutosave(); }
-        canvas.on('object:added', function(e) { if (e.target && e.target.isFieldHint) return; saveHistory(); }); canvas.on('object:modified', saveHistory);
+        canvas.on('object:added', function(e) { if (e.target && e.target.isFieldHint) return; hideEmptyState(); saveHistory(); }); canvas.on('object:modified', saveHistory);
         function loadHistory(i) { isHistoryAction = true; canvas.getObjects().filter(o => !o.isFieldHint).forEach(o => canvas.remove(o)); fabric.util.enlivenObjects(history[i], (objs) => { objs.forEach(o => canvas.add(o)); canvas.renderAll(); isHistoryAction = false; updateHistoryButtons(); scheduleAutosave(); }); }
         function undo() { if (historyIndex > 0) loadHistory(--historyIndex); }
         function redo() { if (historyIndex < history.length - 1) loadHistory(++historyIndex); }
