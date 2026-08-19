@@ -590,7 +590,9 @@
         // réponse y sont de simples traits, pointillés ou soulignés. On les repère sur
         // l'image déjà rendue de la page, donc sans rendu supplémentaire.
         function detectInputLines(sourceCanvas) {
-            const S = 2;  // sous-échantillonnage : suffisant pour des traits, 4x plus rapide
+            // Pleine résolution : un point de pointillé ne fait qu'un ou deux pixels, et
+            // le sous-échantillonnage les moyennait avec le blanc jusqu'à les effacer.
+            const S = 1;
             const w = Math.floor(sourceCanvas.width / S), h = Math.floor(sourceCanvas.height / S);
             if (w < 40 || h < 40) return [];
             const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h;
@@ -605,44 +607,48 @@
                 ink[p] = (data[i + 3] > 40 && lum < 170) ? 1 : 0;
             }
 
-            const MIN_LEN = Math.max(24, Math.round(w * 0.06));   // un trait utile est long
-            const MAX_GAP = Math.max(3, Math.round(w * 0.012));   // tolérance pour les pointillés
-            const BAND = Math.max(6, Math.round(h * 0.012));      // hauteur sondée au-dessus
-            const raw = [];
+            // Cumul vertical par colonne : permet de savoir en temps constant s'il y a
+            // de l'encre au-dessus ou en dessous d'un point donné, dans sa seule colonne.
+            const cum = new Int32Array(w * (h + 1));
+            for (let y = 0; y < h; y++) {
+                const cPrev = y * w, cCur = (y + 1) * w, iRow = y * w;
+                for (let x = 0; x < w; x++) cum[cCur + x] = cum[cPrev + x] + ink[iRow + x];
+            }
+            const colInk = (x, y1, y2) => {  // encre dans la colonne x, lignes [y1, y2]
+                if (y2 < y1) return 0;
+                const a = Math.max(0, y1), b = Math.min(h - 1, y2);
+                if (b < a) return 0;
+                return cum[(b + 1) * w + x] - cum[a * w + x];
+            };
 
-            for (let y = BAND + 2; y < h - 2; y++) {
-                const row = y * w;
+            const MIN_LEN = Math.max(20, Math.round(w * 0.04));   // longueur d'un vrai trait
+            const MIN_RUN = Math.max(6, Math.round(w * 0.008));   // bord d'une case à cocher
+            // Tolérance serrée : au-delà, les sommets des lettres capitales d'un titre
+            // finissent par se relier entre eux et passent pour un trait.
+            const MAX_GAP = Math.max(3, Math.round(w * 0.012));
+            const UP = Math.max(5, Math.round(h * 0.008));    // vide exigé au-dessus
+            const DOWN = Math.max(4, Math.round(h * 0.006));  // vide exigé en dessous
+            const VEXT = Math.max(6, Math.round(h * 0.012));  // portée du test de verticale
+
+            // Une colonne est « fine » si elle porte de l'encre isolée verticalement.
+            // C'est le cœur de la méthode : un pointillé ou un trait est fin, le fût
+            // d'une lettre ne l'est pas. Le test étant fait colonne par colonne, un
+            // pointillé placé au milieu d'une ligne de texte reste détectable.
+            const thin = (x, y) => ink[y * w + x]
+                && colInk(x, y - UP, y - 2) === 0
+                && colInk(x, y + 2, y + DOWN) === 0;
+
+            const raw = [];
+            for (let y = UP + 2; y < h - DOWN - 2; y++) {
                 let x = 0;
                 while (x < w) {
-                    if (!ink[row + x]) { x++; continue; }
+                    if (!thin(x, y)) { x++; continue; }
                     let start = x, end = x, gap = 0, xx = x;
                     while (xx < w && gap <= MAX_GAP) {
-                        if (ink[row + xx]) { end = xx; gap = 0; } else gap++;
+                        if (thin(xx, y)) { end = xx; gap = 0; } else gap++;
                         xx++;
                     }
-                    const len = end - start;
-                    if (len >= MIN_LEN) {
-                        const span = Math.max(1, len);
-                        // Un trait de remplissage a du vide au-dessus : c'est là qu'on écrit.
-                        // Une ligne de texte ou un titre souligné a de l'encre juste au-dessus.
-                        let above = 0;
-                        for (let yy = y - BAND; yy < y - 1; yy++) {
-                            const r = yy * w;
-                            for (let xi = start; xi <= end; xi++) if (ink[r + xi]) above++;
-                        }
-                        // Et il est fin : sous lui aussi c'est vide. Sans ce second contrôle,
-                        // la toute première ligne de pixels d'un paragraphe passerait pour un
-                        // trait, puisqu'elle a effectivement du blanc au-dessus d'elle.
-                        const belowBand = Math.min(6, Math.max(3, Math.round(BAND / 2)));
-                        let below = 0, rows = 0;
-                        for (let yy = y + 2; yy <= y + 1 + belowBand && yy < h; yy++) {
-                            const r = yy * w; rows++;
-                            for (let xi = start; xi <= end; xi++) if (ink[r + xi]) below++;
-                        }
-                        const dAbove = above / (BAND * span);
-                        const dBelow = below / (Math.max(1, rows) * span);
-                        if (dAbove < 0.02 && dBelow < 0.03) raw.push({ y, x1: start, x2: end });
-                    }
+                    if (end - start >= MIN_RUN) raw.push({ y, x1: start, x2: end });
                     x = Math.max(xx, end + 1);
                 }
             }
@@ -657,20 +663,96 @@
                 else merged.push({ ...seg });
             });
 
-            // Remonte jusqu'où la zone reste vide : c'est la hauteur d'écriture disponible
-            const MAX_FIELD_H = Math.round(h * 0.045);
-            return merged.slice(0, 120).map(m => {
+            // Deux segments consistants et proches appartiennent au même emplacement :
+            // c'est le cas d'une date « ...../...../..... », coupée par ses barres
+            // obliques. Le seuil de consistance évite de recoller les fragments de
+            // quelques pixels que laissent les sommets des lettres.
+            const JOIN_GAP = Math.round(w * 0.022), SOLID = Math.round(w * 0.01);
+            merged.sort((a, b) => a.y - b.y || a.x1 - b.x1);
+            for (let i = merged.length - 1; i > 0; i--) {
+                const cur = merged[i], prev = merged[i - 1];
+                if (Math.abs(cur.y - prev.y) > 3) continue;
+                if (cur.x1 - prev.x2 > JOIN_GAP || cur.x1 < prev.x2) continue;
+                if (cur.x2 - cur.x1 < SOLID || prev.x2 - prev.x1 < SOLID) continue;
+                prev.x2 = Math.max(prev.x2, cur.x2);
+                merged.splice(i, 1);
+            }
+
+            // Des montants aux deux extrémités trahissent un rectangle : cadre de page,
+            // bordure de tableau... ou case à cocher si le rectangle est petit et carré.
+            const sideInk = (x, y, dir) => {
+                let n = 0;
+                for (let dx = -2; dx <= 2; dx++) {
+                    const cx = x + dx;
+                    if (cx < 0 || cx >= w) continue;
+                    n += dir > 0 ? colInk(cx, y + 2, y + VEXT) : colInk(cx, y - VEXT, y - 2);
+                }
+                return n;
+            };
+            const boxed = m => {
+                const need = Math.max(2, Math.round(VEXT * 0.4));
+                const left = Math.max(sideInk(m.x1, m.y, 1), sideInk(m.x1, m.y, -1));
+                const right = Math.max(sideInk(m.x2, m.y, 1), sideInk(m.x2, m.y, -1));
+                return left >= need && right >= need;
+            };
+
+            const rules = [], boxes = [];
+            merged.slice(0, 400).forEach(m => {
+                if (boxed(m)) boxes.push(m);
+                else if (m.x2 - m.x1 >= MIN_LEN) rules.push(m);
+            });
+
+            const out = [];
+
+            // Cases à cocher : deux bords parallèles, courts et espacés comme un carré
+            const MAX_CB = Math.round(w * 0.05);
+            const usedBox = new Set();
+            boxes.forEach((top, i) => {
+                if (usedBox.has(i)) return;
+                const width = top.x2 - top.x1;
+                if (width < 4 || width > MAX_CB) return;
+                const j = boxes.findIndex((b, k) => k > i && !usedBox.has(k)
+                    && Math.abs(b.x1 - top.x1) <= 4 && Math.abs(b.x2 - top.x2) <= 4
+                    && b.y - top.y > width * 0.4 && b.y - top.y < width * 2.2);
+                if (j < 0) return;
+                // L'intérieur doit être vide, sinon deux lignes de texte encadrées par
+                // des jambages passeraient pour une case.
+                const bot = boxes[j];
+                let inside = 0, cells = 0;
+                for (let yy = top.y + 2; yy < bot.y - 1; yy++) {
+                    for (let xx = top.x1 + 2; xx < top.x2 - 1; xx++) { cells++; inside += ink[yy * w + xx]; }
+                }
+                if (cells && inside / cells > 0.05) return;
+                usedBox.add(i); usedBox.add(j);
+                out.push({ kind: 'check', left: top.x1 * S, top: top.y * S,
+                           width: width * S, height: (boxes[j].y - top.y) * S });
+            });
+
+            // Traits et pointillés : la zone d'écriture est l'espace vide juste au-dessus
+            const MAX_FIELD_H = Math.round(h * 0.038);
+            rules.forEach(m => {
+                // On remonte tant que la ligne au-dessus reste globalement vide. Le seuil
+                // est volontairement tolérant : un séparateur qui dépasse (la barre d'une
+                // date « ...../..... ») ne doit pas faire croire que la place est occupée,
+                // alors qu'une vraie ligne de texte couvre une bien plus large part.
+                const busy = (m.x2 - m.x1) * 0.15;
                 let up = 2;
                 while (up < MAX_FIELD_H && m.y - up > 0) {
                     const r = (m.y - up) * w;
                     let count = 0;
                     for (let xi = m.x1; xi <= m.x2; xi++) if (ink[r + xi]) count++;
-                    if (count > (m.x2 - m.x1) * 0.04) break;
+                    if (count > busy) break;
                     up++;
                 }
                 const fh = Math.max(8, up);
-                return { left: m.x1 * S, top: (m.y - fh) * S, width: (m.x2 - m.x1) * S, height: fh * S };
-            }).filter(r => r.height >= 12 && r.width >= 30);
+                const rect = { kind: 'text', left: m.x1 * S, top: (m.y - fh) * S,
+                               width: (m.x2 - m.x1) * S, height: fh * S };
+                // Une hauteur trop faible ne laisse pas de quoi écrire : c'est le cas
+                // d'un titre souligné, dont le texte occupe la place juste au-dessus.
+                if (rect.height >= 22 && rect.width >= 30) out.push(rect);
+            });
+
+            return out.slice(0, 120);
         }
 
         let detectedByPage = {}, forceDetection = false;
@@ -704,7 +786,7 @@
                     strokeDashArray: [4, 4], selectable: false, evented: true,
                     hoverCursor: 'text', excludeFromExport: true
                 });
-                hint.isFieldHint = true; hint.fieldKind = 'text'; hint.isDetected = true;
+                hint.isFieldHint = true; hint.fieldKind = r.kind || 'text'; hint.isDetected = true;
                 if (occupied || !state.showFields) hint.visible = false;
                 canvas.add(hint);
                 added++;
@@ -990,7 +1072,7 @@
                 if (!guided.active) refreshFieldPrompt();
             } else {
                 const fontSize = Math.min(Math.max(hint.height * 0.55, 10), 60);
-                const text = new fabric.IText('', { left: hint.left + 4, top: hint.top + (hint.height - fontSize * 1.16 * 1.13) / 2, fill: state.primaryColor, fontSize: fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' });
+                const text = new fabric.IText('', { left: hint.left + 4, top: hint.top + (hint.height - textLineBox(fontSize)) / 2, fill: state.primaryColor, fontSize: fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' });
                 text._sourceHint = hint; hint._filledWith = text; hint.visible = false;
                 text._autofillKey = labelForHint(hint);
                 canvas.add(text); canvas.setActiveObject(text); text.enterEditing(); canvas.requestRenderAll();
@@ -1347,7 +1429,10 @@
             if (state.tool === 'select' || state.tool === 'draw' || state.tool === 'highlight') return;
             if (canvas.getActiveObject() && canvas.getActiveObject().isEditing) { canvas.getActiveObject().exitEditing(); canvas.discardActiveObject(); }
             const pointer = canvas.getPointer(o.e); startX = pointer.x; startY = pointer.y; isDown = true;
-            if (state.tool === 'text') { const text = new fabric.IText('Texte', { left: startX, top: startY, fill: state.primaryColor, fontSize: state.fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' }); text.setControlsVisibility({ mt: true, mb: true, ml: true, mr: true }); canvas.add(text); canvas.setActiveObject(text); text.enterEditing(); text.selectAll(); return; }
+            if (state.tool === 'text') {
+                // Le point actif du curseur en I est en son milieu : on centre donc la
+                // ligne de texte sur le point cliqué, sinon elle apparaît décalée vers le bas.
+                const text = new fabric.IText('Texte', { left: startX, top: startY - textLineBox(state.fontSize) / 2, fill: state.primaryColor, fontSize: state.fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' }); text.setControlsVisibility({ mt: true, mb: true, ml: true, mr: true }); canvas.add(text); canvas.setActiveObject(text); text.enterEditing(); text.selectAll(); return; }
             if (['rect', 'circle', 'check', 'cross'].includes(state.tool)) { 
                 const fillValue = ((state.tool === 'rect' || state.tool === 'circle') && !state.isFillTransparent) ? state.fillColor : 'transparent'; 
                 if (state.tool === 'circle') tempBox = new fabric.Ellipse({ left: startX, top: startY, rx: 0, ry: 0, fill: fillValue, stroke: state.primaryColor, strokeWidth: state.strokeWidth, selectable: false, hoverCursor: 'move' });
@@ -1434,6 +1519,9 @@
         // --- CURSEUR TEXTE À L'ÉCHELLE ---
         // Sur écran à pointeur fin, l'outil texte affiche un I dont la hauteur est
         // exactement celle du texte qui sera écrit : on juge la taille avant de cliquer.
+        // Hauteur réelle occupée par une ligne de texte fabric (lineHeight x _fontSizeMult)
+        function textLineBox(fontSize) { return fontSize * 1.16 * 1.13; }
+
         function updateTextCursor() {
             if (!window.matchMedia('(pointer: fine)').matches) return;
             if (state.tool !== 'text') {
