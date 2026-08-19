@@ -295,6 +295,7 @@
         <button onclick="document.getElementById('project-upload').click()"><i class="ph ph-folder-open"></i> Ouvrir Projet (.json)</button>
         <input type="file" id="project-upload" accept=".json" style="display:none" onchange="handleProjectUpload(event)">
         <button onclick="saveProject()"><i class="ph ph-floppy-disk"></i> Sauvegarder Projet</button>
+        <button onclick="runFieldDetection()"><i class="ph ph-magic-wand"></i> Détecter les zones à remplir</button>
         <button onclick="toggleFieldHints()"><i class="ph ph-textbox"></i> <span id="field-toggle-label">Masquer les champs du formulaire</span></button>
         <button class="danger" onclick="openClearModal()"><i class="ph ph-trash"></i> Tout effacer (Cette page)</button>
     </div>
@@ -381,6 +382,7 @@
             // Le fond est rendu à 2x : on affiche le zoom perçu par rapport au document
             const shown = canvas.getZoom() * (bg ? 2 : 1);
             document.getElementById('zoom-level').innerText = Math.round(shown * 100) + '%';
+            updateTextCursor();
         }
         function zoomStep(factor) {
             let zoom = canvas.getZoom() * factor;
@@ -452,6 +454,7 @@
             pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
             totalPages = pdfDoc.numPages;
             if (!isProjectLoad) { pagesData = {}; currentPageNum = 1; fieldsToastShown = false; }
+            detectedByPage = {}; forceDetection = false;
             if (currentPageNum > totalPages) currentPageNum = totalPages;
 
             document.getElementById('page-count').innerText = totalPages;
@@ -519,6 +522,9 @@
                         document.getElementById('btn-next-page').disabled = pageNum >= totalPages;
 
                         addFieldHints(formAnnotations, viewport);
+                        // Aucun champ interactif dans le PDF : on cherche visuellement
+                        // les traits et pointillés qui tiennent lieu de zones à remplir
+                        if (!formAnnotations.length || forceDetection) addDetectedFieldHints(hiddenCanvas, pageNum);
                         setTool(state.tool);
                         history = []; historyIndex = -1; saveHistory();
                         resolve();
@@ -551,6 +557,135 @@
             fieldsToastShown = true;
         }
 
+        // --- DÉTECTION VISUELLE DES ZONES À REMPLIR ---
+        // Beaucoup de documents ne sont pas de vrais formulaires : les emplacements de
+        // réponse y sont de simples traits, pointillés ou soulignés. On les repère sur
+        // l'image déjà rendue de la page, donc sans rendu supplémentaire.
+        function detectInputLines(sourceCanvas) {
+            const S = 2;  // sous-échantillonnage : suffisant pour des traits, 4x plus rapide
+            const w = Math.floor(sourceCanvas.width / S), h = Math.floor(sourceCanvas.height / S);
+            if (w < 40 || h < 40) return [];
+            const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h;
+            const tctx = tmp.getContext('2d', { willReadFrequently: true });
+            tctx.drawImage(sourceCanvas, 0, 0, w, h);
+            let data;
+            try { data = tctx.getImageData(0, 0, w, h).data; } catch (e) { return []; }
+
+            const ink = new Uint8Array(w * h);
+            for (let i = 0, p = 0; p < ink.length; i += 4, p++) {
+                const lum = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000;
+                ink[p] = (data[i + 3] > 40 && lum < 170) ? 1 : 0;
+            }
+
+            const MIN_LEN = Math.max(24, Math.round(w * 0.06));   // un trait utile est long
+            const MAX_GAP = Math.max(3, Math.round(w * 0.012));   // tolérance pour les pointillés
+            const BAND = Math.max(6, Math.round(h * 0.012));      // hauteur sondée au-dessus
+            const raw = [];
+
+            for (let y = BAND + 2; y < h - 2; y++) {
+                const row = y * w;
+                let x = 0;
+                while (x < w) {
+                    if (!ink[row + x]) { x++; continue; }
+                    let start = x, end = x, gap = 0, xx = x;
+                    while (xx < w && gap <= MAX_GAP) {
+                        if (ink[row + xx]) { end = xx; gap = 0; } else gap++;
+                        xx++;
+                    }
+                    const len = end - start;
+                    if (len >= MIN_LEN) {
+                        const span = Math.max(1, len);
+                        // Un trait de remplissage a du vide au-dessus : c'est là qu'on écrit.
+                        // Une ligne de texte ou un titre souligné a de l'encre juste au-dessus.
+                        let above = 0;
+                        for (let yy = y - BAND; yy < y - 1; yy++) {
+                            const r = yy * w;
+                            for (let xi = start; xi <= end; xi++) if (ink[r + xi]) above++;
+                        }
+                        // Et il est fin : sous lui aussi c'est vide. Sans ce second contrôle,
+                        // la toute première ligne de pixels d'un paragraphe passerait pour un
+                        // trait, puisqu'elle a effectivement du blanc au-dessus d'elle.
+                        const belowBand = Math.min(6, Math.max(3, Math.round(BAND / 2)));
+                        let below = 0, rows = 0;
+                        for (let yy = y + 2; yy <= y + 1 + belowBand && yy < h; yy++) {
+                            const r = yy * w; rows++;
+                            for (let xi = start; xi <= end; xi++) if (ink[r + xi]) below++;
+                        }
+                        const dAbove = above / (BAND * span);
+                        const dBelow = below / (Math.max(1, rows) * span);
+                        if (dAbove < 0.02 && dBelow < 0.03) raw.push({ y, x1: start, x2: end });
+                    }
+                    x = Math.max(xx, end + 1);
+                }
+            }
+
+            // Un trait épais donne plusieurs lignes voisines : on les fusionne
+            const merged = [];
+            raw.sort((a, b) => a.y - b.y || a.x1 - b.x1);
+            raw.forEach(seg => {
+                const hit = merged.find(m => Math.abs(m.y - seg.y) <= 4
+                    && Math.min(m.x2, seg.x2) - Math.max(m.x1, seg.x1) > (seg.x2 - seg.x1) * 0.5);
+                if (hit) { hit.x1 = Math.min(hit.x1, seg.x1); hit.x2 = Math.max(hit.x2, seg.x2); }
+                else merged.push({ ...seg });
+            });
+
+            // Remonte jusqu'où la zone reste vide : c'est la hauteur d'écriture disponible
+            const MAX_FIELD_H = Math.round(h * 0.045);
+            return merged.slice(0, 120).map(m => {
+                let up = 2;
+                while (up < MAX_FIELD_H && m.y - up > 0) {
+                    const r = (m.y - up) * w;
+                    let count = 0;
+                    for (let xi = m.x1; xi <= m.x2; xi++) if (ink[r + xi]) count++;
+                    if (count > (m.x2 - m.x1) * 0.04) break;
+                    up++;
+                }
+                const fh = Math.max(8, up);
+                return { left: m.x1 * S, top: (m.y - fh) * S, width: (m.x2 - m.x1) * S, height: fh * S };
+            }).filter(r => r.height >= 12 && r.width >= 30);
+        }
+
+        let detectedByPage = {}, forceDetection = false;
+
+        // Relance la détection sur la page affichée, y compris sur un PDF qui a déjà
+        // de vrais champs : utile quand ceux-ci ne couvrent qu'une partie du document.
+        async function runFieldDetection() {
+            document.getElementById('main-menu').style.display = 'none';
+            forceDetection = true;
+            saveCurrentPageData();
+            await renderPage(currentPageNum);
+            const n = detectedByPage[currentPageNum] || 0;
+            showToast(n ? `${n} zone${n > 1 ? 's' : ''} à remplir repérée${n > 1 ? 's' : ''} sur cette page`
+                        : 'Aucune zone à remplir repérée sur cette page');
+        }
+        function addDetectedFieldHints(sourceCanvas, pageNum) {
+            let rects;
+            try { rects = detectInputLines(sourceCanvas); }
+            catch (e) { console.warn('Détection des zones impossible :', e); return; }
+
+            let added = 0;
+            rects.forEach(r => {
+                const occupied = canvas.getObjects().some(o => {
+                    if (o.isFieldHint) return false;
+                    const c = o.getCenterPoint();
+                    return c.x >= r.left && c.x <= r.left + r.width && c.y >= r.top && c.y <= r.top + r.height;
+                });
+                const hint = new fabric.Rect({
+                    left: r.left, top: r.top, width: r.width, height: r.height,
+                    fill: 'rgba(124, 58, 237, 0.07)', stroke: '#7c3aed', strokeWidth: 1,
+                    strokeDashArray: [4, 4], selectable: false, evented: true,
+                    hoverCursor: 'text', excludeFromExport: true
+                });
+                hint.isFieldHint = true; hint.fieldKind = 'text'; hint.isDetected = true;
+                if (occupied || !state.showFields) hint.visible = false;
+                canvas.add(hint);
+                added++;
+            });
+            detectedByPage[pageNum] = added;
+            canvas.requestRenderAll();
+            refreshFieldPrompt();
+        }
+
         // Recense les champs de toutes les pages pour proposer le remplissage guidé
         let fieldCountByPage = {}, totalFieldCount = 0;
         async function scanAllFormFields() {
@@ -562,12 +697,33 @@
                     if (n) { fieldCountByPage[i] = n; totalFieldCount += n; }
                 } catch (e) {}
             }
-            showFillPrompt(`${totalFieldCount} champ${totalFieldCount > 1 ? 's' : ''} détecté${totalFieldCount > 1 ? 's' : ''} — Remplir`);
+            refreshFieldPrompt();
         }
 
+        // Deux origines possibles : les vrais champs du PDF, ou ceux repérés à l'image.
+        // Les seconds ne sont connus que pour les pages déjà affichées.
+        function isDetectionMode() { return totalFieldCount === 0; }
+        function availableFieldCount() {
+            return isDetectionMode() ? (detectedByPage[currentPageNum] || 0) : totalFieldCount;
+        }
+
+        function refreshFieldPrompt() {
+            const prompt = document.getElementById('fill-prompt');
+            const detection = isDetectionMode();
+            const n = detection ? remainingFieldCount() : totalFieldCount;
+            if (n > 0 && !guided.active) {
+                const suffix = n > 1 ? 's' : '';
+                document.getElementById('fill-prompt-text').innerText = detection
+                    ? `${n} zone${suffix} à remplir — Remplir`
+                    : `${n} champ${suffix} détecté${suffix} — Remplir`;
+                prompt.classList.add('visible');
+            } else {
+                prompt.classList.remove('visible');
+            }
+        }
         function showFillPrompt(label) {
             const prompt = document.getElementById('fill-prompt');
-            if (totalFieldCount > 0 && !guided.active) {
+            if (availableFieldCount() > 0 && !guided.active) {
                 document.getElementById('fill-prompt-text').innerText = label;
                 prompt.classList.add('visible');
             } else {
@@ -582,16 +738,19 @@
             return canvas.getObjects().filter(o => o.isFieldHint)
                 .sort((a, b) => (a.top - b.top) || (a.left - b.left));
         }
-        function guidedPagesWithFields() { return Object.keys(fieldCountByPage).map(Number).sort((a, b) => a - b); }
+        function guidedPagesWithFields() {
+            if (isDetectionMode()) return Array.from({ length: totalPages }, (_, i) => i + 1);
+            return Object.keys(fieldCountByPage).map(Number).sort((a, b) => a - b);
+        }
 
         async function startGuidedFill() {
-            if (!totalFieldCount) return;
+            if (!guidedHints().length && !availableFieldCount()) return;
             guided.active = true;
             document.getElementById('fill-prompt').classList.remove('visible');
             document.getElementById('guided-bar').classList.add('visible');
             setTool('select');
             const pages = guidedPagesWithFields();
-            if (!fieldCountByPage[currentPageNum] && pages.length) {
+            if (!guidedHints().length && pages.length && !isDetectionMode()) {
                 saveCurrentPageData(); currentPageNum = pages[0]; await renderPage(currentPageNum);
             }
             guided.index = 0;
@@ -608,8 +767,15 @@
             canvas.getObjects().forEach(o => { if (o.isFieldHint) o.set({ stroke: '#7c3aed', strokeWidth: 1 }); });
             canvas.requestRenderAll();
             const left = remainingFieldCount();
-            if (left > 0) showFillPrompt(`${left} champ${left > 1 ? 's' : ''} restant${left > 1 ? 's' : ''} — Reprendre`);
-            else { document.getElementById('fill-prompt').classList.remove('visible'); showToast('Formulaire complété'); }
+            if (left > 0) {
+                const suffix = left > 1 ? 's' : '';
+                showFillPrompt(isDetectionMode()
+                    ? `${left} zone${suffix} restante${suffix} — Reprendre`
+                    : `${left} champ${suffix} restant${suffix} — Reprendre`);
+            } else {
+                document.getElementById('fill-prompt').classList.remove('visible');
+                showToast(isDetectionMode() ? 'Toutes les zones sont remplies' : 'Formulaire complété');
+            }
         }
 
         function remainingFieldCount() { return guidedHints().filter(h => h.visible !== false).length; }
@@ -639,13 +805,29 @@
             hint.set({ stroke: '#dc2626', strokeWidth: 2 });
             canvas.requestRenderAll();
 
-            if (hint.visible !== false && hint.fieldKind === 'text') fillFieldHint(hint);
-            else if (hint.visible !== false) showToast('Touchez la case encadrée en rouge pour la cocher');
+            if (hint.visible !== false && hint.fieldKind === 'text') {
+                fillFieldHint(hint);
+            } else if (hint.visible !== false) {
+                showToast('Touchez la case encadrée en rouge pour la cocher');
+            } else if (hint._filledWith && canvas.getObjects().includes(hint._filledWith)) {
+                // Déjà remplie : on rouvre la saisie pour permettre de corriger
+                canvas.setActiveObject(hint._filledWith);
+                hint._filledWith.enterEditing();
+                hint._filledWith.selectAll();
+                canvas.requestRenderAll();
+            }
 
             const pages = guidedPagesWithFields();
             const pageIdx = pages.indexOf(currentPageNum);
-            const before = pages.slice(0, pageIdx).reduce((s, p) => s + fieldCountByPage[p], 0);
-            document.getElementById('guided-progress').innerText = `Champ ${before + guided.index + 1} / ${totalFieldCount}`;
+            let label;
+            if (isDetectionMode()) {
+                label = `Zone ${guided.index + 1} / ${hints.length}`
+                    + (totalPages > 1 ? ` · p.${currentPageNum}` : '');
+            } else {
+                const before = pages.slice(0, pageIdx).reduce((s, p) => s + (fieldCountByPage[p] || 0), 0);
+                label = `Champ ${before + guided.index + 1} / ${totalFieldCount}`;
+            }
+            document.getElementById('guided-progress').innerText = label;
             document.getElementById('guided-prev').disabled = (guided.index === 0 && pageIdx <= 0);
             const isLast = (guided.index >= hints.length - 1) && (pageIdx === pages.length - 1);
             document.getElementById('guided-next').innerHTML = isLast
@@ -679,10 +861,11 @@
                 const pathStr = `M ${cx - size/2} ${cy} L ${cx - size/6} ${cy + size/2} L ${cx + size/2} ${cy - size/2}`;
                 canvas.add(new fabric.Path(pathStr, { stroke: state.primaryColor, strokeWidth: Math.max(2, size / 8), fill: '', strokeLineCap: 'round', hoverCursor: 'move' }));
                 hint.visible = false; canvas.requestRenderAll(); saveHistory();
+                if (!guided.active) refreshFieldPrompt();
             } else {
                 const fontSize = Math.min(Math.max(hint.height * 0.55, 10), 60);
                 const text = new fabric.IText('', { left: hint.left + 4, top: hint.top + (hint.height - fontSize * 1.16 * 1.13) / 2, fill: state.primaryColor, fontSize: fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' });
-                text._sourceHint = hint; hint.visible = false;
+                text._sourceHint = hint; hint._filledWith = text; hint.visible = false;
                 canvas.add(text); canvas.setActiveObject(text); text.enterEditing(); canvas.requestRenderAll();
             }
         }
@@ -943,6 +1126,7 @@
             p.style.fontSize = Math.min(64, Math.max(6, size * canvas.getZoom())) + 'px';
             p.style.fontFamily = document.getElementById('font-family').value;
             p.style.color = document.getElementById('primary-color').value;
+            updateTextCursor();
         }
 
         function updateStyleBar() {
@@ -1115,6 +1299,30 @@
             if (erasing) canvas.discardActiveObject();
             canvas.requestRenderAll();
             updateStyleBar();
+            updateTextCursor();
+        }
+
+        // --- CURSEUR TEXTE À L'ÉCHELLE ---
+        // Sur écran à pointeur fin, l'outil texte affiche un I dont la hauteur est
+        // exactement celle du texte qui sera écrit : on juge la taille avant de cliquer.
+        function updateTextCursor() {
+            if (!window.matchMedia('(pointer: fine)').matches) return;
+            if (state.tool !== 'text') {
+                if (canvas.defaultCursor.startsWith('url(')) canvas.defaultCursor = 'default';
+                return;
+            }
+            const h = Math.max(4, Math.min(120, Math.round(state.fontSize * canvas.getZoom())));
+            const w = 14, mid = w / 2, serif = 4;
+            // Double tracé : blanc épais dessous, noir dessus, pour rester visible
+            // aussi bien sur un fond clair que sur une zone sombre du document.
+            const bar = (color, width) =>
+                `<g stroke="${color}" stroke-width="${width}" stroke-linecap="round" fill="none">` +
+                `<line x1="${mid}" y1="1.5" x2="${mid}" y2="${h - 1.5}"/>` +
+                `<line x1="${mid - serif}" y1="1.5" x2="${mid + serif}" y2="1.5"/>` +
+                `<line x1="${mid - serif}" y1="${h - 1.5}" x2="${mid + serif}" y2="${h - 1.5}"/></g>`;
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
+                + bar('#ffffff', 3.5) + bar('#1e1e1e', 1.5) + '</svg>';
+            canvas.defaultCursor = `url("data:image/svg+xml;base64,${btoa(svg)}") ${mid} ${h / 2}, text`;
         }
         function deleteSelection() { if (!canvas.getActiveObject()) return; canvas.remove(...canvas.getActiveObjects()); canvas.discardActiveObject(); saveHistory(); updateStyleBar(); }
         // Choisir un outil vaut intention de travailler sur la page : l'accueil s'efface
