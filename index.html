@@ -118,6 +118,20 @@
         #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%) translateY(-90px); background: #111827; color: white; padding: 10px 18px; border-radius: 100px; font-size: 0.9rem; z-index: 500; transition: transform 0.3s, opacity 0.3s; opacity: 0; pointer-events: none; max-width: calc(100vw - 32px); box-sizing: border-box; text-align: center; }
         #toast.visible { transform: translateX(-50%) translateY(0); opacity: 1; }
 
+        /* --- SUGGESTIONS DE PRÉREMPLISSAGE --- */
+        #autofill-menu {
+            position: fixed; z-index: 400; display: none; flex-direction: column;
+            background: white; border-radius: 10px; box-shadow: var(--shadow);
+            border: 1px solid var(--divider); padding: 4px; min-width: 150px; max-width: 220px;
+        }
+        #autofill-menu.visible { display: flex; }
+        #autofill-menu button {
+            text-align: left; border: none; background: none; cursor: pointer;
+            padding: 9px 10px; border-radius: 6px; color: var(--text-color); font-size: 0.9rem;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        #autofill-menu button:hover { background: var(--active-bg); color: var(--active-icon); }
+
         /* --- APERÇU TAILLE DE TEXTE --- */
         #font-preview { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 28px; max-height: 72px; padding: 0 8px; border: 1px dashed var(--divider); border-radius: 8px; background: white; line-height: 1; white-space: nowrap; overflow: hidden; }
 
@@ -164,7 +178,8 @@
             .modal { width: min(400px, calc(100vw - 32px)); box-sizing: border-box; }
             #sig-canvas { max-width: 100%; }
             #guided-bar { bottom: calc(66px + env(safe-area-inset-bottom)); }
-            #fill-prompt { top: calc(62px + env(safe-area-inset-top)); }
+            /* Sur mobile la barre de style est en bas : le bandeau reprend sa place en haut */
+            #fill-prompt { top: calc(62px + env(safe-area-inset-top)); bottom: auto; }
             /* Place pour les quatre actions : la pagination se réduit à « 1 / 10 » */
             .page-info { min-width: 0; margin: 0 2px; padding: 4px 4px; font-size: 0.85rem; }
             #bottom-bar { gap: 4px; }
@@ -203,7 +218,7 @@
         #guided-bar .btn-next:disabled { opacity: 0.4; }
 
         #fill-prompt {
-            position: fixed; top: 82px; left: 50%; transform: translateX(-50%);
+            position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
             display: none; align-items: center; gap: 8px; z-index: 140;
             background: var(--active-icon); color: white; border-radius: 100px;
             padding: 9px 16px; box-shadow: var(--shadow); cursor: pointer;
@@ -223,6 +238,8 @@
     </div>
 
     <div id="toast"></div>
+
+    <div id="autofill-menu"></div>
 
     <div id="empty-state" class="hidden">
         <h2>Éditeur PDF</h2>
@@ -297,6 +314,7 @@
         <button onclick="saveProject()"><i class="ph ph-floppy-disk"></i> Sauvegarder Projet</button>
         <button onclick="runFieldDetection()"><i class="ph ph-magic-wand"></i> Détecter les zones à remplir</button>
         <button onclick="toggleFieldHints()"><i class="ph ph-textbox"></i> <span id="field-toggle-label">Masquer les champs du formulaire</span></button>
+        <button onclick="clearAutofill()"><i class="ph ph-eraser"></i> Effacer les valeurs mémorisées</button>
         <button class="danger" onclick="openClearModal()"><i class="ph ph-trash"></i> Tout effacer (Cette page)</button>
     </div>
 
@@ -504,6 +522,14 @@
             const viewport = page.getViewport({ scale: 2.0 });
             let formAnnotations = [];
             try { formAnnotations = (await page.getAnnotations()).filter(a => a.subtype === 'Widget' && (a.fieldType === 'Tx' || (a.fieldType === 'Btn' && a.checkBox))); } catch (e) {}
+            let textItems = [];
+            try {
+                const tc = await page.getTextContent();
+                textItems = tc.items.filter(it => it.str && it.str.trim()).map(it => {
+                    const m = pdfjsLib.Util.transform(viewport.transform, it.transform);
+                    return { str: it.str.trim(), x: m[4], y: m[5], w: (it.width || 0) * viewport.scale };
+                });
+            } catch (e) {}
             const hiddenCanvas = document.createElement('canvas'); hiddenCanvas.width = viewport.width; hiddenCanvas.height = viewport.height;
             await page.render({ canvasContext: hiddenCanvas.getContext('2d'), viewport: viewport }).promise;
 
@@ -521,6 +547,7 @@
                         document.getElementById('btn-prev-page').disabled = pageNum <= 1; 
                         document.getElementById('btn-next-page').disabled = pageNum >= totalPages;
 
+                        pageTextItems = textItems;
                         addFieldHints(formAnnotations, viewport);
                         // Aucun champ interactif dans le PDF : on cherche visuellement
                         // les traits et pointillés qui tiennent lieu de zones à remplir
@@ -549,6 +576,7 @@
                 if (w < 4 || h < 4) return;
                 const hint = new fabric.Rect({ left: r[0], top: r[1], width: w, height: h, fill: 'rgba(124, 58, 237, 0.08)', stroke: '#7c3aed', strokeWidth: 1, strokeDashArray: [4, 4], selectable: false, evented: true, hoverCursor: 'text', excludeFromExport: true });
                 hint.isFieldHint = true; hint.fieldKind = (a.fieldType === 'Btn') ? 'check' : 'text';
+                hint.fieldName = a.fieldName || '';   // sert de clé de préremplissage
                 const occupied = canvas.getObjects().some(o => { if (o.isFieldHint) return false; const c = o.getCenterPoint(); return c.x >= r[0] && c.x <= r[2] && c.y >= r[1] && c.y <= r[3]; });
                 if (occupied || !state.showFields) hint.visible = false;
                 canvas.add(hint);
@@ -854,6 +882,104 @@
             focusGuidedField();
         }
 
+        // --- PRÉREMPLISSAGE ---
+        // Les valeurs déjà saisies sont mémorisées par libellé de champ, dans le
+        // navigateur uniquement, et reproposées quand un champ du même nom revient.
+        let pageTextItems = [];
+        let autofillStore = null;
+        idbGet('autofill').then(v => { autofillStore = v || {}; }).catch(() => { autofillStore = {}; });
+
+        function normalizeKey(str) {
+            return String(str || '')
+                .normalize('NFD').replace(/[̀-ͯ]/g, '')
+                .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 40);
+        }
+
+        // Le libellé d'un champ, c'est le texte imprimé juste à sa gauche sur la même ligne
+        function labelForHint(hint) {
+            if (hint.fieldName) return normalizeKey(hint.fieldName);
+            const baseline = hint.top + hint.height;
+            let best = null;
+            pageTextItems.forEach(it => {
+                if (Math.abs(it.y - baseline) > hint.height * 1.2) return;
+                const right = it.x + it.w;
+                if (right > hint.left + hint.width * 0.2) return;
+                if (!best || right > best.x + best.w) best = it;
+            });
+            return best ? normalizeKey(best.str) : '';
+        }
+
+        function autofillSuggestions(key, prefix) {
+            if (!autofillStore) return [];
+            const seen = new Set(), out = [];
+            const push = v => { const k = v.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(v); } };
+            (autofillStore[key] || []).forEach(push);
+            // À défaut de correspondance sur le libellé, on propose les saisies récentes
+            if (!out.length) (autofillStore.__recent || []).forEach(push);
+            const p = (prefix || '').toLowerCase();
+            return out.filter(v => !p || (v.toLowerCase().startsWith(p) && v.toLowerCase() !== p)).slice(0, 6);
+        }
+
+        async function rememberAutofill(key, value) {
+            const v = String(value || '').trim();
+            if (!v || v.length > 120) return;
+            if (!autofillStore) autofillStore = {};
+            const put = (k) => {
+                const list = (autofillStore[k] || []).filter(x => x !== v);
+                list.unshift(v);
+                autofillStore[k] = list.slice(0, 8);
+            };
+            if (key) put(key);
+            put('__recent');
+            try { await idbSet('autofill', autofillStore); } catch (e) {}
+        }
+
+        async function clearAutofill() {
+            autofillStore = {};
+            try { await idbDel('autofill'); } catch (e) {}
+            document.getElementById('main-menu').style.display = 'none';
+            showToast('Valeurs de préremplissage effacées');
+        }
+
+        function hideAutofillMenu() { document.getElementById('autofill-menu').classList.remove('visible'); }
+
+        function showAutofillMenu(textObj) {
+            const menu = document.getElementById('autofill-menu');
+            const key = textObj._autofillKey;
+            const list = autofillSuggestions(key, textObj.text);
+            if (!list.length) { hideAutofillMenu(); return; }
+
+            menu.innerHTML = '';
+            list.forEach(value => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.textContent = value;
+                // pointerdown : agir avant que le champ ne perde le focus
+                btn.addEventListener('pointerdown', (ev) => {
+                    ev.preventDefault(); ev.stopPropagation();
+                    textObj.set('text', value);
+                    if (textObj.hiddenTextarea) textObj.hiddenTextarea.value = value;
+                    textObj.setSelectionStart(value.length); textObj.setSelectionEnd(value.length);
+                    canvas.requestRenderAll();
+                    hideAutofillMenu();
+                });
+                menu.appendChild(btn);
+            });
+
+            const p = fabric.util.transformPoint(
+                new fabric.Point(textObj.left, textObj.top + (textObj.height || textObj.fontSize)),
+                canvas.viewportTransform);
+            const maxLeft = window.innerWidth - 220;
+            menu.style.left = Math.max(8, Math.min(p.x, maxLeft)) + 'px';
+            menu.style.top = Math.max(8, p.y + 6) + 'px';
+            menu.classList.add('visible');
+        }
+
+        canvas.on('text:editing:entered', (e) => { if (e.target && e.target._autofillKey !== undefined) showAutofillMenu(e.target); });
+        canvas.on('text:changed', (e) => { if (e.target && e.target._autofillKey !== undefined) showAutofillMenu(e.target); });
+        canvas.on('selection:cleared', hideAutofillMenu);
+        canvas.on('mouse:down', hideAutofillMenu);
+
         function fillFieldHint(hint) {
             if (hint.fieldKind === 'check') {
                 const size = Math.min(hint.width, hint.height) * 0.7;
@@ -866,13 +992,16 @@
                 const fontSize = Math.min(Math.max(hint.height * 0.55, 10), 60);
                 const text = new fabric.IText('', { left: hint.left + 4, top: hint.top + (hint.height - fontSize * 1.16 * 1.13) / 2, fill: state.primaryColor, fontSize: fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' });
                 text._sourceHint = hint; hint._filledWith = text; hint.visible = false;
+                text._autofillKey = labelForHint(hint);
                 canvas.add(text); canvas.setActiveObject(text); text.enterEditing(); canvas.requestRenderAll();
             }
         }
 
         canvas.on('text:editing:exited', function(e) {
             const t = e.target;
+            hideAutofillMenu();
             if (t && !t.text.trim()) { if (t._sourceHint) t._sourceHint.visible = true; canvas.remove(t); canvas.discardActiveObject(); canvas.requestRenderAll(); saveHistory(); updateStyleBar(); }
+            else if (t && t._autofillKey !== undefined) rememberAutofill(t._autofillKey, t.text);
         });
 
         function toggleFieldHints() {
