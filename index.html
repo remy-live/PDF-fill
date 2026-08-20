@@ -527,7 +527,10 @@
                 const tc = await page.getTextContent();
                 textItems = tc.items.filter(it => it.str && it.str.trim()).map(it => {
                     const m = pdfjsLib.Util.transform(viewport.transform, it.transform);
-                    return { str: it.str.trim(), x: m[4], y: m[5], w: (it.width || 0) * viewport.scale };
+                    // Hauteur de police telle que rendue : sert à écrire dans les champs
+                    // avec la même taille que le texte imprimé autour.
+                    const size = Math.hypot(m[2], m[3]);
+                    return { str: it.str.trim(), x: m[4], y: m[5], w: (it.width || 0) * viewport.scale, size };
                 });
             } catch (e) {}
             const hiddenCanvas = document.createElement('canvas'); hiddenCanvas.width = viewport.width; hiddenCanvas.height = viewport.height;
@@ -746,7 +749,7 @@
                 }
                 const fh = Math.max(8, up);
                 const rect = { kind: 'text', left: m.x1 * S, top: (m.y - fh) * S,
-                               width: (m.x2 - m.x1) * S, height: fh * S };
+                               width: (m.x2 - m.x1) * S, height: fh * S, lineY: m.y * S };
                 // Une hauteur trop faible ne laisse pas de quoi écrire : c'est le cas
                 // d'un titre souligné, dont le texte occupe la place juste au-dessus.
                 if (rect.height >= 22 && rect.width >= 30) out.push(rect);
@@ -768,6 +771,21 @@
             showToast(n ? `${n} zone${n > 1 ? 's' : ''} à remplir repérée${n > 1 ? 's' : ''} sur cette page`
                         : 'Aucune zone à remplir repérée sur cette page');
         }
+        // Taille du texte imprimé sur la même ligne qu'une zone : on privilégie le
+        // fragment le plus proche horizontalement, sinon la taille dominante de la page.
+        function localTextSize(x1, x2, baselineY) {
+            let best = null, bestDist = Infinity;
+            pageTextItems.forEach(it => {
+                if (!it.size || Math.abs(it.y - baselineY) > it.size * 1.2) return;
+                const dist = (it.x + it.w < x1) ? x1 - (it.x + it.w)
+                           : (it.x > x2) ? it.x - x2 : 0;
+                if (dist < bestDist) { bestDist = dist; best = it; }
+            });
+            if (best) return best.size;
+            const sizes = pageTextItems.map(it => it.size).filter(Boolean).sort((a, b) => a - b);
+            return sizes.length ? sizes[Math.floor(sizes.length / 2)] : null;
+        }
+
         function addDetectedFieldHints(sourceCanvas, pageNum) {
             let rects;
             try { rects = detectInputLines(sourceCanvas); }
@@ -775,18 +793,50 @@
 
             let added = 0;
             rects.forEach(r => {
+                let left = r.left, top = r.top, width = r.width, height = r.height;
+                let textSize = null;
+
+                // La zone se cale sur le texte imprimé de la même ligne : elle prend sa
+                // hauteur, et non toute la place blanche disponible. Sans cela le cadre
+                // remontait jusqu'à la ligne précédente et l'écriture sortait démesurée.
+                if (r.kind === 'text' && r.lineY) {
+                    textSize = localTextSize(left, left + width, r.lineY);
+                    if (textSize) {
+                        const wanted = Math.min(height, Math.max(14, textSize * 1.45));
+                        top = r.lineY - wanted;
+                        height = wanted;
+                    }
+                    // On déborde sous le trait : c'est là qu'on clique spontanément pour
+                    // écrire, et non dans le blanc au-dessus. Sans ce débord, un clic sur
+                    // la ligne elle-même tombait à côté de la zone et ne faisait rien.
+                    height += 8;
+
+                    // Le bas des lettres d'un libellé peut amorcer le trait détecté : on
+                    // recale le début de la zone après le texte imprimé pour ne pas
+                    // écrire par-dessus (« FAIT LE » suivi de sa date, par exemple).
+                    pageTextItems.forEach(it => {
+                        if (!it.size || Math.abs(it.y - r.lineY) > it.size * 1.2) return;
+                        const right = it.x + it.w;
+                        if (right > left && right < left + width * 0.5) {
+                            width -= (right + 2 - left);
+                            left = right + 2;
+                        }
+                    });
+                }
+
                 const occupied = canvas.getObjects().some(o => {
                     if (o.isFieldHint) return false;
                     const c = o.getCenterPoint();
-                    return c.x >= r.left && c.x <= r.left + r.width && c.y >= r.top && c.y <= r.top + r.height;
+                    return c.x >= left && c.x <= left + width && c.y >= top && c.y <= top + height;
                 });
                 const hint = new fabric.Rect({
-                    left: r.left, top: r.top, width: r.width, height: r.height,
+                    left: left, top: top, width: width, height: height,
                     fill: 'rgba(124, 58, 237, 0.07)', stroke: '#7c3aed', strokeWidth: 1,
                     strokeDashArray: [4, 4], selectable: false, evented: true,
                     hoverCursor: 'text', excludeFromExport: true
                 });
                 hint.isFieldHint = true; hint.fieldKind = r.kind || 'text'; hint.isDetected = true;
+                hint.textSize = textSize; hint.lineY = r.lineY || null;
                 if (occupied || !state.showFields) hint.visible = false;
                 canvas.add(hint);
                 added++;
@@ -1071,8 +1121,18 @@
                 hint.visible = false; canvas.requestRenderAll(); saveHistory();
                 if (!guided.active) refreshFieldPrompt();
             } else {
-                const fontSize = Math.min(Math.max(hint.height * 0.55, 10), 60);
-                const text = new fabric.IText('', { left: hint.left + 4, top: hint.top + (hint.height - textLineBox(fontSize)) / 2, fill: state.primaryColor, fontSize: fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' });
+                // Taille du texte imprimé autour si on la connaît, sinon déduite de la
+                // hauteur du champ : on écrit comme le document, pas plus gros.
+                const around = hint.textSize || localTextSize(hint.left, hint.left + hint.width,
+                                                              hint.lineY || (hint.top + hint.height));
+                const fontSize = Math.min(Math.max(around || hint.height * 0.55, 8), 60);
+                // Sur une zone repérée visuellement, l'écriture se pose sur le trait,
+                // à la même ligne de base que le texte imprimé. Dans un champ de
+                // formulaire, elle se centre dans le cadre.
+                const top = hint.lineY
+                    ? hint.lineY - 1 - fontSize * FABRIC_BASELINE
+                    : hint.top + (hint.height - textLineBox(fontSize)) / 2;
+                const text = new fabric.IText('', { left: hint.left + 4, top: top, fill: state.primaryColor, fontSize: fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' });
                 text._sourceHint = hint; hint._filledWith = text; hint.visible = false;
                 text._autofillKey = labelForHint(hint);
                 canvas.add(text); canvas.setActiveObject(text); text.enterEditing(); canvas.requestRenderAll();
@@ -1521,6 +1581,8 @@
         // exactement celle du texte qui sera écrit : on juge la taille avant de cliquer.
         // Hauteur réelle occupée par une ligne de texte fabric (lineHeight x _fontSizeMult)
         function textLineBox(fontSize) { return fontSize * 1.16 * 1.13; }
+        // Distance du haut d'une ligne fabric à sa ligne de base : 1.13 x (1 - 0.222)
+        const FABRIC_BASELINE = 1.13 * 0.778;
 
         function updateTextCursor() {
             if (!window.matchMedia('(pointer: fine)').matches) return;
