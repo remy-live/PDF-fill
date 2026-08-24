@@ -380,6 +380,18 @@
             fabric.Object.prototype.padding = 6;
         }
 
+        // Le curseur clignotant de saisie est peint sur un calque supérieur distinct.
+        // Fabric ne l'efface que via setViewportTransform ; comme nous modifions la vue
+        // directement (zoom, pincement, défilement), il laissait des traits noirs
+        // verticaux à chaque ancienne position. On le redessine donc nous-mêmes.
+        function refreshCaretLayer() {
+            if (!canvas.contextTop) return;
+            if (canvas.isDrawingMode && canvas._isCurrentlyDrawing) return;  // tracé en cours
+            canvas.clearContext(canvas.contextTop);
+            const active = canvas.getActiveObject();
+            if (active && active.isEditing) active.renderCursorOrSelection();
+        }
+
         function fitPageToScreen() {
             const bg = canvas.backgroundImage; if (!bg) return;
             const marginX = isMobileLayout() ? 16 : 40;
@@ -390,6 +402,7 @@
             canvas.viewportTransform[4] = (window.innerWidth - bg.width * zoom) / 2;
             canvas.viewportTransform[5] = marginTop + (window.innerHeight - marginTop - marginBottom - bg.height * zoom) / 2;
             canvas.requestRenderAll();
+            refreshCaretLayer();
             updateFontPreview();
             updateZoomLabel();
         }
@@ -408,6 +421,7 @@
             const viewH = window.visualViewport ? window.visualViewport.height : window.innerHeight;
             canvas.zoomToPoint(new fabric.Point(window.innerWidth / 2, viewH / 2), zoom);
             canvas.requestRenderAll();
+            refreshCaretLayer();
             updateZoomLabel();
         }
         function zoomFit() { fitPageToScreen(); }
@@ -429,6 +443,7 @@
                 if (objBottom > visibleBottom) {
                     canvas.viewportTransform[5] -= (objBottom - visibleBottom);
                     canvas.requestRenderAll();
+                    refreshCaretLayer();
                 }
             });
         }
@@ -959,6 +974,7 @@
                                              : window.innerWidth / 2 - (hint.left + hint.width / 2) * targetZoom;
             canvas.viewportTransform[5] = topBar + usableH / 2 - (hint.top + hint.height / 2) * targetZoom;
             canvas.requestRenderAll();
+            refreshCaretLayer();
 
             // Halo temporaire pour repérer le champ actif d'un coup d'œil
             canvas.getObjects().forEach(o => { if (o.isFieldHint) o.set({ stroke: '#7c3aed', strokeWidth: 1 }); });
@@ -1524,9 +1540,10 @@
         canvas.on('object:scaling', function(e) { if (e.target && e.target.type === 'i-text') { e.target.set({ fontSize: e.target.fontSize * e.target.scaleX, scaleX: 1, scaleY: 1 }); if (canvas.getActiveObject() === e.target) { document.getElementById('font-size').value = Math.round(e.target.fontSize); document.getElementById('font-size-slider').value = Math.round(e.target.fontSize); updateFontPreview(); } } });
 
         const snapZone = 10; let guideLines = [];
-        canvas.on('object:moving', function(e) { const obj = e.target; const center = canvas.getVpCenter(); guideLines.forEach(l => canvas.remove(l)); guideLines = []; if (Math.abs(obj.top - center.y) < snapZone) { obj.set({ top: center.y }); const line = new fabric.Line([-9999, center.y, 9999, center.y], { stroke: '#7c3aed', strokeWidth: 1/canvas.getZoom(), strokeDashArray: [5,5], selectable: false, evented: false }); canvas.add(line); guideLines.push(line); } if (Math.abs(obj.left - center.x) < snapZone) { obj.set({ left: center.x }); const line = new fabric.Line([center.x, -9999, center.x, 9999], { stroke: '#7c3aed', strokeWidth: 1/canvas.getZoom(), strokeDashArray: [5,5], selectable: false, evented: false }); canvas.add(line); guideLines.push(line); } });
+        // Déplacer un objet en cours de saisie laissait le curseur peint à l'ancienne place
+        canvas.on('object:moving', function(e) { refreshCaretLayer(); const obj = e.target; const center = canvas.getVpCenter(); guideLines.forEach(l => canvas.remove(l)); guideLines = []; if (Math.abs(obj.top - center.y) < snapZone) { obj.set({ top: center.y }); const line = new fabric.Line([-9999, center.y, 9999, center.y], { stroke: '#7c3aed', strokeWidth: 1/canvas.getZoom(), strokeDashArray: [5,5], selectable: false, evented: false }); canvas.add(line); guideLines.push(line); } if (Math.abs(obj.left - center.x) < snapZone) { obj.set({ left: center.x }); const line = new fabric.Line([center.x, -9999, center.x, 9999], { stroke: '#7c3aed', strokeWidth: 1/canvas.getZoom(), strokeDashArray: [5,5], selectable: false, evented: false }); canvas.add(line); guideLines.push(line); } });
         canvas.on('mouse:up', function() { guideLines.forEach(l => canvas.remove(l)); guideLines = []; });
-        canvas.on('mouse:wheel', function(opt) { const e = opt.e; e.preventDefault(); e.stopPropagation(); if (e.ctrlKey) { let zoom = canvas.getZoom() * (0.995 ** e.deltaY); if (zoom > 5) zoom = 5; if (zoom < 0.2) zoom = 0.2; canvas.zoomToPoint({ x: e.offsetX, y: e.offsetY }, zoom); updateFontPreview(); updateZoomLabel(); } else { canvas.viewportTransform[4] -= e.deltaX; canvas.viewportTransform[5] -= e.deltaY; canvas.requestRenderAll(); } });
+        canvas.on('mouse:wheel', function(opt) { const e = opt.e; e.preventDefault(); e.stopPropagation(); if (e.ctrlKey) { let zoom = canvas.getZoom() * (0.995 ** e.deltaY); if (zoom > 5) zoom = 5; if (zoom < 0.2) zoom = 0.2; canvas.zoomToPoint({ x: e.offsetX, y: e.offsetY }, zoom); refreshCaretLayer(); updateFontPreview(); updateZoomLabel(); } else { canvas.viewportTransform[4] -= e.deltaX; canvas.viewportTransform[5] -= e.deltaY; canvas.requestRenderAll(); refreshCaretLayer(); } });
 
         // --- GESTES TACTILES (pincer pour zoomer, 2 doigts pour déplacer) ---
         let pinchDist = null, pinchMid = null;
@@ -1555,6 +1572,7 @@
                 canvas.viewportTransform[4] += info.mid.x - pinchMid.x;
                 canvas.viewportTransform[5] += info.mid.y - pinchMid.y;
                 canvas.requestRenderAll();
+                refreshCaretLayer();
                 pinchDist = info.dist; pinchMid = info.mid;
                 updateFontPreview();
                 updateZoomLabel();
