@@ -533,6 +533,7 @@
         }
 
         async function renderPage(pageNum) {
+            currentFieldHint = null;
             const page = await pdfDoc.getPage(pageNum);
             const viewport = page.getViewport({ scale: 2.0 });
             let formAnnotations = [];
@@ -595,8 +596,8 @@
                 const hint = new fabric.Rect({ left: r[0], top: r[1], width: w, height: h, fill: 'rgba(124, 58, 237, 0.08)', stroke: '#7c3aed', strokeWidth: 1, strokeDashArray: [4, 4], selectable: false, evented: true, hoverCursor: 'text', excludeFromExport: true });
                 hint.isFieldHint = true; hint.fieldKind = (a.fieldType === 'Btn') ? 'check' : 'text';
                 hint.fieldName = a.fieldName || '';   // sert de clé de préremplissage
-                const occupied = canvas.getObjects().some(o => { if (o.isFieldHint) return false; const c = o.getCenterPoint(); return c.x >= r[0] && c.x <= r[2] && c.y >= r[1] && c.y <= r[3]; });
-                if (occupied || !state.showFields) hint.visible = false;
+                hint.isFilled = linkHintToExistingText(hint, r[0], r[1], r[2], r[3]);
+                applyHintAppearance(hint);
                 canvas.add(hint);
             });
             canvas.requestRenderAll();
@@ -839,11 +840,6 @@
                     });
                 }
 
-                const occupied = canvas.getObjects().some(o => {
-                    if (o.isFieldHint) return false;
-                    const c = o.getCenterPoint();
-                    return c.x >= left && c.x <= left + width && c.y >= top && c.y <= top + height;
-                });
                 const hint = new fabric.Rect({
                     left: left, top: top, width: width, height: height,
                     fill: 'rgba(124, 58, 237, 0.07)', stroke: '#7c3aed', strokeWidth: 1,
@@ -852,7 +848,8 @@
                 });
                 hint.isFieldHint = true; hint.fieldKind = r.kind || 'text'; hint.isDetected = true;
                 hint.textSize = textSize; hint.lineY = r.lineY || null;
-                if (occupied || !state.showFields) hint.visible = false;
+                hint.isFilled = linkHintToExistingText(hint, left, top, left + width, top + height);
+                applyHintAppearance(hint);
                 canvas.add(hint);
                 added++;
             });
@@ -906,6 +903,153 @@
             }
         }
 
+        // Le lien entre une zone et sa saisie n'existe qu'en mémoire : il est perdu au
+        // rechargement ou au changement de page, où les objets sont recréés depuis le
+        // projet enregistré. On le rétablit en retrouvant la saisie qui occupe la zone,
+        // faute de quoi un champ rempli redevenait impossible à corriger.
+        function linkHintToExistingText(hint, x1, y1, x2, y2) {
+            const occupant = canvas.getObjects().find(o => {
+                if (o.isFieldHint) return false;
+                const c = o.getCenterPoint();
+                return c.x >= x1 && c.x <= x2 && c.y >= y1 && c.y <= y2;
+            });
+            if (!occupant) return false;
+            if (occupant.type === 'i-text') {
+                hint._filledWith = occupant;
+                occupant._sourceHint = hint;
+                if (occupant._autofillKey === undefined) occupant._autofillKey = labelForHint(hint);
+            }
+            return true;
+        }
+
+        // Un champ rempli ne s'efface pas : il devient transparent tout en restant
+        // cliquable, pour qu'on puisse revenir corriger sa valeur.
+        function applyHintAppearance(hint) {
+            if (!state.showFields) { hint.visible = false; return; }
+            hint.visible = true;
+            const discret = !!hint.isFilled;
+            hint.set({
+                fill: discret ? 'rgba(0,0,0,0)' : 'rgba(124, 58, 237, 0.07)',
+                stroke: discret ? 'rgba(0,0,0,0)' : '#7c3aed',
+                strokeWidth: 1
+            });
+        }
+        function resetHintStyles() {
+            canvas.getObjects().forEach(o => { if (o.isFieldHint) applyHintAppearance(o); });
+        }
+        function markCurrentHint(hint) {
+            resetHintStyles();
+            hint.set({ stroke: '#dc2626', strokeWidth: 2 });
+            canvas.requestRenderAll();
+        }
+        // Rouvre la saisie d'un champ déjà rempli, valeur sélectionnée
+        function reopenFilledHint(hint) {
+            if (!hint._filledWith || !canvas.getObjects().includes(hint._filledWith)) return false;
+            canvas.setActiveObject(hint._filledWith);
+            hint._filledWith.enterEditing();
+            hint._filledWith.selectAll();
+            canvas.requestRenderAll();
+            return true;
+        }
+        // Clic sur un champ : on écrit, ou l'on coche
+        function activateFieldHint(hint) {
+            currentFieldHint = hint;
+            markCurrentHint(hint);
+            if (hint.isFilled && hint.fieldKind !== 'check') { reopenFilledHint(hint); return; }
+            if (!hint.isFilled) fillFieldHint(hint);
+        }
+
+        // --- NAVIGATION AU CLAVIER ENTRE LES CHAMPS ---
+        // Champ sur lequel on se trouve, qu'on y écrive ou qu'on vienne d'y arriver
+        // par tabulation : c'est le point de départ du saut vers le suivant.
+        let currentFieldHint = null;
+
+        // Amène la zone dans la partie visible, sans changer le zoom : on ne
+        // bouscule la vue que si le champ visé sort réellement de l'écran.
+        function scrollHintIntoView(hint) {
+            const z = canvas.getZoom();
+            const top = hint.top * z + canvas.viewportTransform[5];
+            const bottom = (hint.top + hint.height) * z + canvas.viewportTransform[5];
+            const viewH = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+            const marginTop = isMobileLayout() ? 70 : 110;
+            const marginBottom = isMobileLayout() ? 180 : 130;
+            let dy = 0;
+            if (top < marginTop) dy = marginTop + 20 - top;
+            else if (bottom > viewH - marginBottom) dy = (viewH - marginBottom) - bottom - 20;
+            if (dy) {
+                canvas.viewportTransform[5] += dy;
+                canvas.requestRenderAll();
+                refreshCaretLayer();
+            }
+        }
+
+        // Ouvre un champ : saisie pour une zone de texte, sélection pour une case
+        function openFieldHint(hint) {
+            if (!hint) return;
+            currentFieldHint = hint;
+            scrollHintIntoView(hint);
+            markCurrentHint(hint);
+
+            if (hint.fieldKind === 'check') return;  // Espace la coche, Tab passe outre
+            if (!hint.isFilled) { fillFieldHint(hint); return; }
+            if (hint._filledWith && canvas.getObjects().includes(hint._filledWith)) {
+                canvas.setActiveObject(hint._filledWith);
+                hint._filledWith.enterEditing();
+                hint._filledWith.selectAll();
+                canvas.requestRenderAll();
+            }
+        }
+
+        // Passe au champ suivant (ou précédent), en changeant de page s'il le faut
+        async function goToAdjacentField(step) {
+            const hints = guidedHints();
+            const from = currentFieldHint;
+            const i = hints.indexOf(from);
+            if (i < 0) return;
+
+            const active = canvas.getActiveObject();
+            if (active && active.isEditing) active.exitEditing();
+            canvas.discardActiveObject();
+
+            if (guided.active) { guided.index = i; await guidedGo(step); return; }
+
+            const next = i + step;
+            if (next >= 0 && next < hints.length) { openFieldHint(hints[next]); return; }
+
+            const pages = guidedPagesWithFields();
+            const target = pages[pages.indexOf(currentPageNum) + step];
+            if (target === undefined) {
+                showToast(step > 0 ? 'Dernier champ atteint' : 'Premier champ atteint');
+                return;
+            }
+            saveCurrentPageData(); currentPageNum = target;
+            await renderPage(currentPageNum);
+            const after = guidedHints();
+            if (after.length) openFieldHint(step > 0 ? after[0] : after[after.length - 1]);
+        }
+
+        // En capture : fabric traite la touche dans sa zone de saisie masquée,
+        // il faut donc l'intercepter avant lui.
+        window.addEventListener('keydown', (e) => {
+            const tag = e.target && e.target.tagName;
+            if (tag === 'INPUT' || tag === 'SELECT') return;   // réglages de la barre d'outils
+            if (!currentFieldHint) return;
+
+            if (e.key === 'Tab') {
+                e.preventDefault(); e.stopPropagation();
+                goToAdjacentField(e.shiftKey ? -1 : 1);
+                return;
+            }
+            // Sur une case à cocher, Espace ou Entrée coche puis enchaîne
+            const active = canvas.getActiveObject();
+            if ((e.key === ' ' || e.key === 'Enter') && currentFieldHint.fieldKind === 'check'
+                && !(active && active.isEditing)) {
+                e.preventDefault(); e.stopPropagation();
+                if (currentFieldHint.visible !== false) fillFieldHint(currentFieldHint);
+                goToAdjacentField(1);
+            }
+        }, true);
+
         // --- REMPLISSAGE GUIDÉ ---
         const guided = { active: false, index: 0 };
 
@@ -939,7 +1083,7 @@
             if (obj && obj.isEditing) obj.exitEditing();
             canvas.discardActiveObject(); canvas.requestRenderAll();
             fitPageToScreen();
-            canvas.getObjects().forEach(o => { if (o.isFieldHint) o.set({ stroke: '#7c3aed', strokeWidth: 1 }); });
+            resetHintStyles();
             canvas.requestRenderAll();
             const left = remainingFieldCount();
             if (left > 0) {
@@ -953,7 +1097,7 @@
             }
         }
 
-        function remainingFieldCount() { return guidedHints().filter(h => h.visible !== false).length; }
+        function remainingFieldCount() { return guidedHints().filter(h => !h.isFilled).length; }
 
         function focusGuidedField() {
             const hints = guidedHints();
@@ -977,13 +1121,12 @@
             refreshCaretLayer();
 
             // Halo temporaire pour repérer le champ actif d'un coup d'œil
-            canvas.getObjects().forEach(o => { if (o.isFieldHint) o.set({ stroke: '#7c3aed', strokeWidth: 1 }); });
-            hint.set({ stroke: '#dc2626', strokeWidth: 2 });
-            canvas.requestRenderAll();
+            currentFieldHint = hint;
+            markCurrentHint(hint);
 
-            if (hint.visible !== false && hint.fieldKind === 'text') {
+            if (!hint.isFilled && hint.fieldKind === 'text') {
                 fillFieldHint(hint);
-            } else if (hint.visible !== false) {
+            } else if (!hint.isFilled) {
                 showToast('Touchez la case encadrée en rouge pour la cocher');
             } else if (hint._filledWith && canvas.getObjects().includes(hint._filledWith)) {
                 // Déjà remplie : on rouvre la saisie pour permettre de corriger
@@ -1129,12 +1272,13 @@
         canvas.on('mouse:down', hideAutofillMenu);
 
         function fillFieldHint(hint) {
+            currentFieldHint = hint;
             if (hint.fieldKind === 'check') {
                 const size = Math.min(hint.width, hint.height) * 0.7;
                 const cx = hint.left + hint.width / 2, cy = hint.top + hint.height / 2;
                 const pathStr = `M ${cx - size/2} ${cy} L ${cx - size/6} ${cy + size/2} L ${cx + size/2} ${cy - size/2}`;
                 canvas.add(new fabric.Path(pathStr, { stroke: state.primaryColor, strokeWidth: Math.max(2, size / 8), fill: '', strokeLineCap: 'round', hoverCursor: 'move' }));
-                hint.visible = false; canvas.requestRenderAll(); saveHistory();
+                hint.isFilled = true; applyHintAppearance(hint); canvas.requestRenderAll(); saveHistory();
                 if (!guided.active) refreshFieldPrompt();
             } else {
                 // Taille du texte imprimé autour si on la connaît, sinon déduite de la
@@ -1149,7 +1293,7 @@
                     ? hint.lineY - 1 - fontSize * FABRIC_BASELINE
                     : hint.top + (hint.height - textLineBox(fontSize)) / 2;
                 const text = new fabric.IText('', { left: hint.left + 4, top: top, fill: state.primaryColor, fontSize: fontSize, fontFamily: state.fontFamily, lockUniScaling: true, hoverCursor: 'move' });
-                text._sourceHint = hint; hint._filledWith = text; hint.visible = false;
+                text._sourceHint = hint; hint._filledWith = text; hint.isFilled = true; applyHintAppearance(hint);
                 text._autofillKey = labelForHint(hint);
                 canvas.add(text); canvas.setActiveObject(text); text.enterEditing(); canvas.requestRenderAll();
             }
@@ -1158,13 +1302,13 @@
         canvas.on('text:editing:exited', function(e) {
             const t = e.target;
             hideAutofillMenu();
-            if (t && !t.text.trim()) { if (t._sourceHint) t._sourceHint.visible = true; canvas.remove(t); canvas.discardActiveObject(); canvas.requestRenderAll(); saveHistory(); updateStyleBar(); }
+            if (t && !t.text.trim()) { if (t._sourceHint) { t._sourceHint.isFilled = false; applyHintAppearance(t._sourceHint); } canvas.remove(t); canvas.discardActiveObject(); canvas.requestRenderAll(); saveHistory(); updateStyleBar(); }
             else if (t && t._autofillKey !== undefined) rememberAutofill(t._autofillKey, t.text);
         });
 
         function toggleFieldHints() {
             state.showFields = !state.showFields;
-            canvas.getObjects().forEach(o => { if (o.isFieldHint) o.visible = state.showFields; });
+            resetHintStyles();
             canvas.requestRenderAll();
             document.getElementById('field-toggle-label').innerText = state.showFields ? 'Masquer les champs du formulaire' : 'Afficher les champs du formulaire';
             document.getElementById('main-menu').style.display = 'none';
@@ -1459,7 +1603,7 @@
         }
         function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
         function openClearModal() { document.getElementById('clear-modal').style.display = 'flex'; document.getElementById('main-menu').style.display = 'none'; }
-        function clearAll() { canvas.getObjects().filter(o => !o.isFieldHint).forEach(o => canvas.remove(o)); canvas.getObjects().forEach(o => { if (o.isFieldHint && state.showFields) o.visible = true; }); closeModals(); saveHistory(); updateStyleBar(); }
+        function clearAll() { canvas.getObjects().filter(o => !o.isFieldHint).forEach(o => canvas.remove(o)); canvas.getObjects().forEach(o => { if (o.isFieldHint) o.isFilled = false; }); resetHintStyles(); closeModals(); saveHistory(); updateStyleBar(); }
 
         // --- SIGNATURES ---
         let savedSignatures = JSON.parse(localStorage.getItem('userSignatures')) || [];
@@ -1498,7 +1642,11 @@
         let isDown = false, startX, startY, tempBox = null;
         let eraserActive = false, eraserDirty = false;
         canvas.on('mouse:down', function(o) {
-            if (o.target && o.target.isFieldHint && state.tool !== 'eraser') { fillFieldHint(o.target); return; }
+            if (o.target && o.target.isFieldHint && state.tool !== 'eraser') { activateFieldHint(o.target); return; }
+            // Cliquer la saisie d'un champ déjà rempli le redésigne comme champ
+            // courant, pour que la tabulation reparte bien de celui-ci.
+            if (o.target && o.target._sourceHint) currentFieldHint = o.target._sourceHint;
+            else if (!(o.target && o.target.isFieldHint)) currentFieldHint = null;
             if (state.tool === 'eraser') { if (o.target && !o.target.isFieldHint) { canvas.remove(o.target); eraserDirty = true; canvas.requestRenderAll(); } eraserActive = true; return; }
             if (o.target && o.target.type === 'i-text') { o.target.on('mousedblclick', () => o.target.enterEditing()); }
             if (o.target && state.tool !== 'draw' && state.tool !== 'highlight') return; 
