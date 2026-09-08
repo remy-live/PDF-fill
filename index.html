@@ -271,6 +271,7 @@
         <div class="divider-v"></div>
         <div class="tool-group">
             <button class="tool-btn active" data-tool="select" title="Sélection (V)"><i class="ph ph-cursor"></i></button>
+            <button class="tool-btn" data-tool="pan" title="Main — déplacer la feuille (ou maintenir Espace)"><i class="ph ph-hand"></i></button>
             <button class="tool-btn" data-tool="draw" title="Dessin"><i class="ph ph-pencil-simple"></i></button>
             <button class="tool-btn" data-tool="highlight" title="Surligneur"><i class="ph ph-highlighter"></i></button>
             <button class="tool-btn" data-tool="eraser" title="Gomme (efface les objets touchés)"><i class="ph ph-eraser"></i></button>
@@ -399,10 +400,8 @@
             const marginBottom = isMobileLayout() ? 130 : 110;
             const zoom = Math.min((window.innerWidth - marginX) / bg.width, (window.innerHeight - marginTop - marginBottom) / bg.height);
             canvas.setZoom(zoom);
-            canvas.viewportTransform[4] = (window.innerWidth - bg.width * zoom) / 2;
-            canvas.viewportTransform[5] = marginTop + (window.innerHeight - marginTop - marginBottom - bg.height * zoom) / 2;
-            canvas.requestRenderAll();
-            refreshCaretLayer();
+            applyViewport((window.innerWidth - bg.width * zoom) / 2,
+                          marginTop + (window.innerHeight - marginTop - marginBottom - bg.height * zoom) / 2);
             updateFontPreview();
             updateZoomLabel();
         }
@@ -420,8 +419,7 @@
             zoom = Math.min(5, Math.max(0.1, zoom));
             const viewH = window.visualViewport ? window.visualViewport.height : window.innerHeight;
             canvas.zoomToPoint(new fabric.Point(window.innerWidth / 2, viewH / 2), zoom);
-            canvas.requestRenderAll();
-            refreshCaretLayer();
+            clampNow();
             updateZoomLabel();
         }
         function zoomFit() { fitPageToScreen(); }
@@ -441,9 +439,8 @@
                 const objBottom = fabric.util.transformPoint(
                     new fabric.Point(obj.left, obj.top + obj.height), canvas.viewportTransform).y;
                 if (objBottom > visibleBottom) {
-                    canvas.viewportTransform[5] -= (objBottom - visibleBottom);
-                    canvas.requestRenderAll();
-                    refreshCaretLayer();
+                    applyViewport(canvas.viewportTransform[4],
+                                  canvas.viewportTransform[5] - (objBottom - visibleBottom));
                 }
             });
         }
@@ -976,11 +973,7 @@
             let dy = 0;
             if (top < marginTop) dy = marginTop + 20 - top;
             else if (bottom > viewH - marginBottom) dy = (viewH - marginBottom) - bottom - 20;
-            if (dy) {
-                canvas.viewportTransform[5] += dy;
-                canvas.requestRenderAll();
-                refreshCaretLayer();
-            }
+            if (dy) applyViewport(canvas.viewportTransform[4], canvas.viewportTransform[5] + dy);
         }
 
         // Ouvre un champ : saisie pour une zone de texte, sélection pour une case
@@ -1114,11 +1107,9 @@
             const bottomBar = isMobileLayout() ? 170 : 120;
             const viewH = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
             const usableH = Math.max(120, viewH - topBar - bottomBar);
-            canvas.viewportTransform[4] = bg ? (window.innerWidth - bg.width * targetZoom) / 2
-                                             : window.innerWidth / 2 - (hint.left + hint.width / 2) * targetZoom;
-            canvas.viewportTransform[5] = topBar + usableH / 2 - (hint.top + hint.height / 2) * targetZoom;
-            canvas.requestRenderAll();
-            refreshCaretLayer();
+            applyViewport(bg ? (window.innerWidth - bg.width * targetZoom) / 2
+                             : window.innerWidth / 2 - (hint.left + hint.width / 2) * targetZoom,
+                          topBar + usableH / 2 - (hint.top + hint.height / 2) * targetZoom);
 
             // Halo temporaire pour repérer le champ actif d'un coup d'œil
             currentFieldHint = hint;
@@ -1642,6 +1633,7 @@
         let isDown = false, startX, startY, tempBox = null;
         let eraserActive = false, eraserDirty = false;
         canvas.on('mouse:down', function(o) {
+            if (beginPanIfNeeded(o.e)) return;   // outil Main, Espace, ou bouton du milieu
             if (o.target && o.target.isFieldHint && state.tool !== 'eraser') { activateFieldHint(o.target); return; }
             // Cliquer la saisie d'un champ déjà rempli le redésigne comme champ
             // courant, pour que la tabulation reparte bien de celui-ci.
@@ -1665,6 +1657,7 @@
             } else if (state.tool === 'line' || state.tool === 'arrow') { tempBox = new fabric.Line([startX, startY, startX, startY], { stroke: state.primaryColor, strokeWidth: state.strokeWidth * 1.5, strokeLineCap: 'round', selectable: false, hoverCursor: 'move' }); canvas.add(tempBox); }
         });
         canvas.on('mouse:move', function(o) {
+            if (continuePan(o.e)) return;
             if (state.tool === 'eraser' && eraserActive) { if (o.target && !o.target.isFieldHint) { canvas.remove(o.target); eraserDirty = true; canvas.requestRenderAll(); } return; }
             if (!isDown || !tempBox) return; const pointer = canvas.getPointer(o.e);
             if (['rect', 'check', 'cross'].includes(state.tool)) { let w = Math.abs(pointer.x - startX), h = Math.abs(pointer.y - startY); if (state.tool !== 'rect') h = w = Math.max(w, h); tempBox.set({ width: w, height: h, left: pointer.x < startX ? startX - w : startX, top: pointer.y < startY ? startY - h : startY });
@@ -1672,6 +1665,7 @@
             } else if (state.tool === 'line' || state.tool === 'arrow') { tempBox.set({ x2: pointer.x, y2: pointer.y }); } canvas.requestRenderAll();
         });
         canvas.on('mouse:up', function() {
+            endPan();
             isDown = false;
             if (eraserActive) { eraserActive = false; if (eraserDirty) { eraserDirty = false; saveHistory(); } return; }
             if (['check', 'cross'].includes(state.tool) && tempBox) {
@@ -1691,7 +1685,19 @@
         // Déplacer un objet en cours de saisie laissait le curseur peint à l'ancienne place
         canvas.on('object:moving', function(e) { refreshCaretLayer(); const obj = e.target; const center = canvas.getVpCenter(); guideLines.forEach(l => canvas.remove(l)); guideLines = []; if (Math.abs(obj.top - center.y) < snapZone) { obj.set({ top: center.y }); const line = new fabric.Line([-9999, center.y, 9999, center.y], { stroke: '#7c3aed', strokeWidth: 1/canvas.getZoom(), strokeDashArray: [5,5], selectable: false, evented: false }); canvas.add(line); guideLines.push(line); } if (Math.abs(obj.left - center.x) < snapZone) { obj.set({ left: center.x }); const line = new fabric.Line([center.x, -9999, center.x, 9999], { stroke: '#7c3aed', strokeWidth: 1/canvas.getZoom(), strokeDashArray: [5,5], selectable: false, evented: false }); canvas.add(line); guideLines.push(line); } });
         canvas.on('mouse:up', function() { guideLines.forEach(l => canvas.remove(l)); guideLines = []; });
-        canvas.on('mouse:wheel', function(opt) { const e = opt.e; e.preventDefault(); e.stopPropagation(); if (e.ctrlKey) { let zoom = canvas.getZoom() * (0.995 ** e.deltaY); if (zoom > 5) zoom = 5; if (zoom < 0.2) zoom = 0.2; canvas.zoomToPoint({ x: e.offsetX, y: e.offsetY }, zoom); refreshCaretLayer(); updateFontPreview(); updateZoomLabel(); } else { canvas.viewportTransform[4] -= e.deltaX; canvas.viewportTransform[5] -= e.deltaY; canvas.requestRenderAll(); refreshCaretLayer(); } });
+        canvas.on('mouse:wheel', function(opt) {
+            const e = opt.e; e.preventDefault(); e.stopPropagation();
+            if (e.ctrlKey || e.metaKey) {          // zoom (pincement du pavé tactile compris)
+                let zoom = canvas.getZoom() * (0.995 ** e.deltaY);
+                zoom = Math.min(5, Math.max(0.2, zoom));
+                canvas.zoomToPoint({ x: e.offsetX, y: e.offsetY }, zoom);
+                clampNow(); updateFontPreview(); updateZoomLabel();
+            } else if (e.shiftKey) {               // défilement horizontal
+                panBy(-(e.deltaY || e.deltaX), 0);
+            } else {
+                panBy(-e.deltaX, -e.deltaY);
+            }
+        });
 
         // --- GESTES TACTILES (pincer pour zoomer, 2 doigts pour déplacer) ---
         let pinchDist = null, pinchMid = null;
@@ -1717,10 +1723,8 @@
                 let zoom = canvas.getZoom() * (info.dist / pinchDist);
                 if (zoom > 5) zoom = 5; if (zoom < 0.2) zoom = 0.2;
                 canvas.zoomToPoint(new fabric.Point(info.mid.x, info.mid.y), zoom);
-                canvas.viewportTransform[4] += info.mid.x - pinchMid.x;
-                canvas.viewportTransform[5] += info.mid.y - pinchMid.y;
-                canvas.requestRenderAll();
-                refreshCaretLayer();
+                applyViewport(canvas.viewportTransform[4] + info.mid.x - pinchMid.x,
+                              canvas.viewportTransform[5] + info.mid.y - pinchMid.y);
                 pinchDist = info.dist; pinchMid = info.mid;
                 updateFontPreview();
                 updateZoomLabel();
@@ -1728,14 +1732,101 @@
         }, { passive: false });
         ['touchend', 'touchcancel'].forEach(evt => canvas.upperCanvasEl.addEventListener(evt, (e) => { if (e.touches.length < 2) { pinchDist = null; pinchMid = null; } }));
 
+        // --- DÉPLACEMENT DANS LA FEUILLE ---
+        // Gestes attendus d'une visionneuse : molette pour défiler, Maj+molette à
+        // l'horizontale, Ctrl+molette pour zoomer, et glisser avec l'outil Main,
+        // la barre d'espace enfoncée, ou le bouton du milieu de la souris.
+        let panning = null, spaceHeld = false;
+
+        function pointerXY(e) {
+            const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+            return t ? { x: t.clientX, y: t.clientY } : { x: e.clientX, y: e.clientY };
+        }
+
+        // Empêche de perdre la feuille hors de l'écran : une part reste toujours visible
+        function clampOffsets(vt) {
+            const bg = canvas.backgroundImage; if (!bg) return vt;
+            const z = vt[0];
+            const pw = bg.width * z, ph = bg.height * z;
+            const vw = window.innerWidth;
+            const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+            const garde = Math.min(140, pw * 0.5, ph * 0.5);
+            vt[4] = Math.max(garde - pw, Math.min(vw - garde, vt[4]));
+            vt[5] = Math.max(garde - ph, Math.min(vh - garde, vt[5]));
+            return vt;
+        }
+
+        // Tout changement de cadrage doit passer par setViewportTransform : c'est elle
+        // qui recalcule les zones de clic de chaque objet. En modifiant le tableau à la
+        // main, la détection restait figée sur l'ancien cadrage et les clics tombaient
+        // à côté des champs dès qu'on avait zoomé ou déplacé la feuille.
+        function applyViewport(x, y) {
+            const vt = canvas.viewportTransform.slice();
+            vt[4] = x; vt[5] = y;
+            canvas.setViewportTransform(clampOffsets(vt));
+            refreshCaretLayer();
+        }
+        function clampNow() { applyViewport(canvas.viewportTransform[4], canvas.viewportTransform[5]); }
+        function panBy(dx, dy) {
+            applyViewport(canvas.viewportTransform[4] + dx, canvas.viewportTransform[5] + dy);
+        }
+
+        function isTypingContext() {
+            const a = canvas.getActiveObject();
+            if (a && a.isEditing) return true;
+            const el = document.activeElement;
+            return !!el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
+        }
+
+        function beginPanIfNeeded(e) {
+            if (!(state.tool === 'pan' || spaceHeld || e.button === 1)) return false;
+            if (e.preventDefault) e.preventDefault();
+            panning = pointerXY(e);
+            canvas.setCursor('grabbing');
+            return true;
+        }
+        function continuePan(e) {
+            if (!panning) return false;
+            const p = pointerXY(e);
+            panBy(p.x - panning.x, p.y - panning.y);
+            panning = p;
+            canvas.setCursor('grabbing');
+            return true;
+        }
+        function endPan() {
+            if (!panning) return;
+            panning = null;
+            canvas.setCursor(state.tool === 'pan' || spaceHeld ? 'grab' : 'default');
+        }
+
+        // Espace maintenu : main temporaire, quel que soit l'outil actif
+        window.addEventListener('keydown', (e) => {
+            if (e.code !== 'Space' || e.repeat || spaceHeld) return;
+            if (isTypingContext()) return;
+            if (currentFieldHint && currentFieldHint.fieldKind === 'check') return;  // Espace coche
+            spaceHeld = true;
+            canvas.defaultCursor = 'grab';
+            e.preventDefault();
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code !== 'Space') return;
+            spaceHeld = false;
+            endPan();
+            canvas.defaultCursor = state.tool === 'eraser' ? 'crosshair' : 'default';
+            updateTextCursor();
+        });
+        window.addEventListener('blur', () => { spaceHeld = false; endPan(); });
+
         function setTool(t) {
             state.tool = t; document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active')); document.querySelector(`[data-tool="${t}"]`).classList.add('active');
             canvas.isDrawingMode = (t === 'draw' || t === 'highlight');
             if (t === 'highlight') { canvas.freeDrawingBrush.color = hexToRgba(state.primaryColor, 0.4); canvas.freeDrawingBrush.width = state.strokeWidth * 5; } else { canvas.freeDrawingBrush.color = state.primaryColor; canvas.freeDrawingBrush.width = state.strokeWidth * 2; }
             canvas.selection = (t === 'select');
-            const erasing = (t === 'eraser');
-            canvas.defaultCursor = erasing ? 'crosshair' : 'default';
-            canvas.forEachObject(o => { if (o.isFieldHint) return; o.selectable = !erasing; o.evented = true; o.hoverCursor = erasing ? 'crosshair' : 'move'; });
+            const erasing = (t === 'eraser'), panMode = (t === 'pan');
+            // En mode Main, aucun objet n'est visé : glisser déplace toujours la feuille
+            canvas.skipTargetFind = panMode;
+            canvas.defaultCursor = panMode ? 'grab' : (erasing ? 'crosshair' : 'default');
+            canvas.forEachObject(o => { if (o.isFieldHint) return; o.selectable = !erasing && !panMode; o.evented = true; o.hoverCursor = erasing ? 'crosshair' : 'move'; });
             if (erasing) canvas.discardActiveObject();
             canvas.requestRenderAll();
             updateStyleBar();
